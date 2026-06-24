@@ -39,7 +39,14 @@ def parse_args() -> argparse.Namespace:
         default=0.3,
         help="Fraction of total steps for beta ramp when --anneal-steps=0",
     )
-    parser.add_argument("--free-nats", type=float, default=3.0)
+    parser.add_argument("--free-nats", type=float, default=0.0,
+                        help="Optional floor on balanced KL (0 = KL balancing only)")
+    parser.add_argument(
+        "--kl-balance",
+        type=float,
+        default=0.8,
+        help="DreamerV2 KL balancing alpha (prior term weight)",
+    )
     parser.add_argument("--grad-clip", type=float, default=100.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--data-path", type=str, default="data/pendulum_episodes.npz")
@@ -68,6 +75,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         anneal_steps=args.anneal_steps,
         anneal_fraction=args.anneal_fraction,
         free_nats=args.free_nats,
+        kl_balance_scale=args.kl_balance,
         grad_clip=args.grad_clip,
         seed=args.seed,
         data_path=args.data_path,

@@ -37,7 +37,8 @@ class Config:
     beta_max: float = 1.0
     anneal_steps: int = 0  # 0 = auto (see anneal_fraction)
     anneal_fraction: float = 0.3  # fraction of total steps for beta ramp when auto
-    free_nats: float = 3.0
+    free_nats: float = 0.0  # 0 = disabled; optional floor on balanced KL scalar
+    kl_balance_scale: float = 0.8  # DreamerV2 alpha: prior learns faster than posterior
     grad_clip: float = 100.0
 
     # Data collection

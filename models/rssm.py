@@ -135,7 +135,7 @@ class RSSM(nn.Module):
         Args:
             obs_seq: ``(B, T, C, H, W)`` observations in ``[0, 1]``.
             action_seq: ``(B, T, action_dim)`` continuous actions.
-            free_nats: Minimum KL nats per latent dimension (free bits).
+            free_nats: Optional floor on balanced KL scalar (0 = disabled).
 
         Returns:
             RSSMOutput with reconstructions and scalar losses.
@@ -148,6 +148,8 @@ class RSSM(nn.Module):
         recons: list[torch.Tensor] = []
         kl_raw_list: list[torch.Tensor] = []
         kl_per_dim_list: list[torch.Tensor] = []
+        kl_balanced_list: list[torch.Tensor] = []
+        alpha = self.config.kl_balance_scale
 
         for t in range(seq_len):
             obs_t = obs_seq[:, t]
@@ -156,13 +158,24 @@ class RSSM(nn.Module):
             h, z, recon, extras = self.forward_step(h, z, a_prev, obs_t, sample=True)
             recons.append(recon)
 
-            # KL(q || p) via torch.distributions for numerical stability
-            q_dist = Normal(extras["mu_q"], extras["sigma_q"])
-            p_dist = Normal(extras["mu_p"], extras["sigma_p"])
+            mu_q, sigma_q = extras["mu_q"], extras["sigma_q"]
+            mu_p, sigma_p = extras["mu_p"], extras["sigma_p"]
+
+            # Diagnostic KL(q || p) — no detach, for logging and bar charts
+            q_dist = Normal(mu_q, sigma_q)
+            p_dist = Normal(mu_p, sigma_p)
             kl_t = kl_divergence(q_dist, p_dist)  # (B, latent_dim)
+
+            # DreamerV2 KL balancing: train prior faster than posterior
+            q_sg = Normal(mu_q.detach(), sigma_q.detach())
+            p_sg = Normal(mu_p.detach(), sigma_p.detach())
+            kl_lhs = kl_divergence(q_sg, p_dist)   # gradients → prior
+            kl_rhs = kl_divergence(q_dist, p_sg)   # gradients → posterior
+            kl_balanced = alpha * kl_lhs + (1 - alpha) * kl_rhs
 
             kl_per_dim_list.append(kl_t)
             kl_raw_list.append(kl_t.sum(dim=-1))
+            kl_balanced_list.append(kl_balanced)
 
             # a_t becomes a_{t-1} for the next step
             a_prev = a_t
@@ -172,9 +185,10 @@ class RSSM(nn.Module):
 
         recon_loss = ((recon_stack - obs_seq) ** 2).sum(dim=[2, 3, 4]).mean()
         kl_loss_raw = torch.mean(torch.stack(kl_raw_list, dim=1))
-        kl_per_sample = kl_per_dim.sum(dim=-1)  # (B, T)
-        kl_mean = kl_per_sample.mean()
-        kl_loss = torch.clamp(kl_mean, min=free_nats)
+        kl_balanced_total = torch.stack(kl_balanced_list, dim=1).sum(dim=-1).mean()
+        kl_loss = kl_balanced_total
+        if free_nats > 0:
+            kl_loss = torch.clamp(kl_loss, min=free_nats)
 
         return RSSMOutput(
             recon=recon_stack,
