@@ -1,0 +1,83 @@
+"""Hyperparameter configuration for the RSSM world model."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+@dataclass
+class Config:
+    """All configurable dimensions and training hyperparameters."""
+
+    # Environment
+    env_name: str = "Pendulum-v1"
+    img_size: int = 64
+    img_channels: int = 3
+
+    # Model dimensions
+    embed_dim: int = 256
+    latent_dim: int = 32
+    hidden_dim: int = 200
+    action_dim: int = 1  # Pendulum continuous torque (raw, in [-2, 2])
+
+    # CNN architecture
+    encoder_channels: tuple[int, int, int] = (32, 64, 128)
+    decoder_channels: tuple[int, int, int] = (128, 64, 32)
+
+    # Training
+    seq_len: int = 25
+    batch_size: int = 16
+    chunk_stride: int = 1  # sliding-window step between chunks (1 = max overlap)
+    drop_last: bool = False
+    lr: float = 1e-3
+    epochs: int = 50
+    num_workers: int = 0
+
+    # Loss
+    beta_max: float = 1.0
+    anneal_steps: int = 0  # 0 = auto (see anneal_fraction)
+    anneal_fraction: float = 0.3  # fraction of total steps for beta ramp when auto
+    free_nats: float = 3.0
+    grad_clip: float = 100.0
+
+    # Data collection
+    num_episodes: int = 200
+    max_steps_per_episode: int = 200
+    data_path: str = "data/pendulum_episodes.npz"
+
+    # Checkpointing & logging
+    checkpoint_dir: str = "checkpoints"
+    checkpoint_every: int = 10
+    log_every: int = 50
+    seed: int = 42
+
+    # Imagination
+    context_len: int = 30
+    imagine_horizon: int = 30
+    output_dir: str = "outputs"
+
+    # W&B (optional)
+    use_wandb: bool = True
+    wandb_project: str = "rssm-worldmodel"
+    wandb_run_name: str = ""
+
+    @property
+    def spatial_size(self) -> int:
+        """Spatial resolution after three stride-2 conv layers: img_size // 8."""
+        return self.img_size // 8
+
+    @property
+    def flatten_dim(self) -> int:
+        """Flattened feature dimension before the encoder projection."""
+        c = self.encoder_channels[-1]
+        s = self.spatial_size
+        return c * s * s
+
+    def recommended_min_episodes(self) -> int:
+        """Heuristic minimum episodes for ~10 batches/epoch at current settings."""
+        target_chunks = self.batch_size * 10
+        # Pendulum episodes are fixed-length; each yields (max_steps - seq_len + 1) chunks.
+        chunks_per_episode = max(0, self.max_steps_per_episode - self.seq_len + 1)
+        if chunks_per_episode == 0:
+            return self.batch_size * 10
+        return max(200, (target_chunks + chunks_per_episode - 1) // chunks_per_episode)

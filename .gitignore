@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Training artifacts
+checkpoints/
+outputs/
+*.pt
+*.pth
+
+# Generated datasets (re-collect with --force-collect)
+data/*.npz
+
+# Logging
+.wandb/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+.cursor/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Matplotlib
+.matplotlib/
