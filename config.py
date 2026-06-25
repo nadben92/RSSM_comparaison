@@ -39,6 +39,7 @@ class Config:
     anneal_fraction: float = 0.3  # fraction of total steps for beta ramp when auto
     free_nats: float = 0.0  # 0 = disabled; optional floor on balanced KL scalar
     kl_balance_scale: float = 0.8  # DreamerV2 alpha: prior learns faster than posterior
+    lambda_motion: float = 10.0  # motion-weighted recon: upweight pixels that change over time
     grad_clip: float = 100.0
 
     # Data collection

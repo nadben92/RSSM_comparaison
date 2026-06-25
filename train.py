@@ -47,6 +47,12 @@ def parse_args() -> argparse.Namespace:
         default=0.8,
         help="DreamerV2 KL balancing alpha (prior term weight)",
     )
+    parser.add_argument(
+        "--lambda-motion",
+        type=float,
+        default=10.0,
+        help="Motion weighting for recon loss (higher = prioritize moving pixels)",
+    )
     parser.add_argument("--grad-clip", type=float, default=100.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--data-path", type=str, default="data/pendulum_episodes.npz")
@@ -76,6 +82,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         anneal_fraction=args.anneal_fraction,
         free_nats=args.free_nats,
         kl_balance_scale=args.kl_balance,
+        lambda_motion=args.lambda_motion,
         grad_clip=args.grad_clip,
         seed=args.seed,
         data_path=args.data_path,

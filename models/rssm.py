@@ -183,7 +183,13 @@ class RSSM(nn.Module):
         recon_stack = torch.stack(recons, dim=1)  # (B, T, C, H, W)
         kl_per_dim = torch.stack(kl_per_dim_list, dim=1)  # (B, T, latent_dim)
 
-        recon_loss = ((recon_stack - obs_seq) ** 2).sum(dim=[2, 3, 4]).mean()
+        # Motion-weighted recon: upweight pixels that change between frames
+        motion = torch.zeros_like(obs_seq)
+        motion[:, 1:] = (obs_seq[:, 1:] - obs_seq[:, :-1]).abs()
+        motion = motion.mean(dim=2, keepdim=True).detach()  # (B, T, 1, H, W)
+        weight = 1.0 + self.config.lambda_motion * motion
+        sq_err = (recon_stack - obs_seq) ** 2
+        recon_loss = (weight * sq_err).sum(dim=[2, 3, 4]).mean()
         kl_loss_raw = torch.mean(torch.stack(kl_raw_list, dim=1))
         kl_balanced_total = torch.stack(kl_balanced_list, dim=1).sum(dim=-1).mean()
         kl_loss = kl_balanced_total
