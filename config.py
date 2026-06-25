@@ -11,11 +11,10 @@ class Config:
 
     # Environment
     env_name: str = "Pendulum-v1"
-    img_size: int = 64
+    img_size: int = 32
     img_channels: int = 3
 
-    # Model dimensions
-    embed_dim: int = 256
+    # Model dimensions (embed_dim derived from CNN bottleneck — see property below)
     latent_dim: int = 32
     hidden_dim: int = 200
     action_dim: int = 1  # Pendulum continuous torque (raw, in [-2, 2])
@@ -39,13 +38,13 @@ class Config:
     anneal_fraction: float = 0.3  # fraction of total steps for beta ramp when auto
     free_nats: float = 0.0  # 0 = disabled; optional floor on balanced KL scalar
     kl_balance_scale: float = 0.8  # DreamerV2 alpha: prior learns faster than posterior
-    lambda_motion: float = 10.0  # motion-weighted recon: upweight pixels that change over time
+    lambda_motion: float = 5.0  # lower than 64x64 default: fewer background pixels at 32x32
     grad_clip: float = 100.0
 
     # Data collection
     num_episodes: int = 200
     max_steps_per_episode: int = 200
-    data_path: str = "data/pendulum_episodes.npz"
+    data_path: str = "data/pendulum_episodes_32.npz"
 
     # Checkpointing & logging
     checkpoint_dir: str = "checkpoints"
@@ -62,6 +61,11 @@ class Config:
     use_wandb: bool = True
     wandb_project: str = "rssm-worldmodel"
     wandb_run_name: str = ""
+
+    @property
+    def embed_dim(self) -> int:
+        """Encoder embedding size (= channels × H × W at the CNN bottleneck)."""
+        return self.flatten_dim
 
     @property
     def spatial_size(self) -> int:

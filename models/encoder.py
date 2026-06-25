@@ -9,7 +9,10 @@ from config import Config
 
 
 class CNNEncoder(nn.Module):
-    """Three-layer stride-2 Conv2d stack followed by a linear projection."""
+    """Three stride-2 Conv2d layers: img_size → img_size/2 → img_size/4 → img_size/8.
+
+    For img_size=32: 32 → 16 → 8 → 4 (3 layers). For img_size=64: 64 → 32 → 16 → 8.
+    """
 
     def __init__(self, config: Config) -> None:
         super().__init__()

@@ -9,7 +9,10 @@ from config import Config
 
 
 class CNNDecoder(nn.Module):
-    """Linear projection followed by three ConvTranspose2d layers."""
+    """Linear projection followed by three ConvTranspose2d layers (mirror of encoder).
+
+    With kernel=4, stride=2, padding=1: spatial_size → 2× → 2× → 2× (e.g. 4 → 8 → 16 → 32).
+    """
 
     def __init__(self, config: Config) -> None:
         super().__init__()

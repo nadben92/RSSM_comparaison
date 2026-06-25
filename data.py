@@ -32,7 +32,7 @@ def collect_episodes(
     num_episodes: int,
     max_steps: int,
     action_dim: int,
-    img_size: int = 64,
+    img_size: int = 32,
     seed: int = 42,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Collect random-agent rollouts with rgb_array rendering.

@@ -50,12 +50,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--lambda-motion",
         type=float,
-        default=10.0,
+        default=5.0,
         help="Motion weighting for recon loss (higher = prioritize moving pixels)",
     )
     parser.add_argument("--grad-clip", type=float, default=100.0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--data-path", type=str, default="data/pendulum_episodes.npz")
+    parser.add_argument("--data-path", type=str, default="data/pendulum_episodes_32.npz")
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     parser.add_argument("--checkpoint-every", type=int, default=10)
     parser.add_argument("--log-every", type=int, default=50)
