@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
         "--env-name",
         type=str,
         default="bouncing_ball",
-        help="bouncing_ball | bouncing_ball_obstacles | Gymnasium env id",
+        help="bouncing_ball | Gymnasium env id",
     )
     parser.add_argument("--num-episodes", type=int, default=200)
     parser.add_argument("--max-steps", type=int, default=200)
@@ -71,7 +71,7 @@ def parse_args() -> argparse.Namespace:
         "--ball-radius",
         type=int,
         default=7,
-        help="Ball radius for bouncing_ball envs (~15%% at r=7; use r=5 for obstacles variant)",
+        help="Ball radius for bouncing_ball envs (~15%% at r=7 on 32x32)",
     )
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     parser.add_argument("--checkpoint-every", type=int, default=10)

@@ -151,9 +151,11 @@ Outputs in `outputs/`:
 - `imagine_ep0.gif` — side-by-side: real context (left) vs imagined rollout (right)
 - `kl_per_dim_ep0.png` — bar chart of KL per latent dimension
 
-### Bouncing ball (base)
+### Bouncing ball
 
-Pure elastic physics, zero actions, ball `r=7` (~15% of 32×32):
+Elastic wall bounces, ball `r=7` (~15% of 32×32). Scalar action `action_dim=1`: `+1` accelerates along velocity, `-1` decelerates. Each step samples `+1` or `-1` at random during collection.
+
+**Re-collect required** if you have an older dataset with zero actions (`--force-collect`).
 
 ```bash
 python train.py \
@@ -171,45 +173,13 @@ python train.py \
   --no-wandb
 ```
 
-Preview GIF: `python -c "from bouncing_ball import BouncingBallConfig, save_episode_gif; save_episode_gif('outputs/bouncing_ball_elastic.gif', cfg=BouncingBallConfig(ball_radius=7, action_dim=1))"`
-
-### Bouncing ball + obstacles (harder variant)
-
-Smaller ball (`r=5`), 2 fixed circular obstacles (same positions every episode), same zero-action physics. **Separate dataset** — does not overwrite `data/bouncing_ball.npz`.
-
-```bash
-python train.py \
-  --force-collect \
-  --env-name bouncing_ball_obstacles \
-  --data-path data/bouncing_ball_obstacles.npz \
-  --ball-radius 5 \
-  --num-episodes 500 \
-  --max-steps 200 \
-  --epochs 50 \
-  --seq-len 25 \
-  --batch-size 128 \
-  --lambda-motion 5 \
-  --kl-balance 0.8 \
-  --no-wandb
-```
-
 Preview GIF:
 
 ```bash
-python -c "
-from bouncing_ball import BouncingBallConfig, default_fixed_obstacles, save_episode_gif
-cfg = BouncingBallConfig(ball_radius=5, action_dim=1, obstacle_positions=default_fixed_obstacles(32), obstacle_radius=2)
-save_episode_gif('outputs/bouncing_ball_obstacles.gif', episode_len=40, seed=42, cfg=cfg)
-"
+python -c "from bouncing_ball import BouncingBallConfig, save_episode_gif; save_episode_gif('outputs/bouncing_ball_elastic.gif', cfg=BouncingBallConfig(ball_radius=7, action_dim=1))"
 ```
 
-Imagination on the obstacles checkpoint:
-
-```bash
-python imagine.py \
-  --checkpoint checkpoints/rssm_epoch050.pt \
-  --data-path data/bouncing_ball_obstacles.npz
-```
+Imagination uses the **recorded actions** from the same episode (open-loop with real action sequence).
 
 ## Extending the backbone
 

@@ -17,7 +17,7 @@ class Config:
     # Model dimensions (embed_dim derived from CNN bottleneck — see property below)
     latent_dim: int = 32
     hidden_dim: int = 200
-    action_dim: int = 1  # bouncing_ball: fixed zero scalar action
+    action_dim: int = 1  # bouncing_ball: +1 accel / -1 decel along velocity
 
     # CNN architecture
     encoder_channels: tuple[int, int, int] = (32, 64, 128)
@@ -47,8 +47,6 @@ class Config:
     crop_ratio: float = 1.0  # unused for bouncing_ball; 1.0 = no crop for Gym envs
     ball_radius: int = 7  # ~15% disk area on 32x32 (use preview to tune)
     data_path: str = "data/bouncing_ball.npz"
-    # Obstacles variant: env_name="bouncing_ball_obstacles",
-    # data_path="data/bouncing_ball_obstacles.npz", ball_radius=5
 
     # Checkpointing & logging
     checkpoint_dir: str = "checkpoints"
