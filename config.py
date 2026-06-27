@@ -10,14 +10,14 @@ class Config:
     """All configurable dimensions and training hyperparameters."""
 
     # Environment
-    env_name: str = "Pendulum-v1"
+    env_name: str = "bouncing_ball"
     img_size: int = 32
     img_channels: int = 3
 
     # Model dimensions (embed_dim derived from CNN bottleneck — see property below)
     latent_dim: int = 32
     hidden_dim: int = 200
-    action_dim: int = 1  # Pendulum continuous torque (raw, in [-2, 2])
+    action_dim: int = 1  # bouncing_ball: fixed zero scalar action
 
     # CNN architecture
     encoder_channels: tuple[int, int, int] = (32, 64, 128)
@@ -44,8 +44,9 @@ class Config:
     # Data collection / preprocessing
     num_episodes: int = 200
     max_steps_per_episode: int = 200
-    crop_ratio: float = 0.5  # center crop before resize; 1.0 = disabled
-    data_path: str = "data/pendulum_cropped.npz"
+    crop_ratio: float = 1.0  # unused for bouncing_ball; 1.0 = no crop for Gym envs
+    ball_radius: int = 7  # ~15% disk area on 32x32 (use preview to tune)
+    data_path: str = "data/bouncing_ball.npz"
 
     # Checkpointing & logging
     checkpoint_dir: str = "checkpoints"

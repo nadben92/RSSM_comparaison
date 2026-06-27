@@ -131,25 +131,34 @@ def collect_episodes(
     action_dim: int,
     img_size: int = 32,
     crop_ratio: float = 0.5,
+    ball_radius: int = 5,
     seed: int = 42,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Collect random-agent rollouts with rgb_array rendering.
+    """Collect or generate episodes for training.
 
-    Args:
-        env_name: Gymnasium environment id (e.g. ``Pendulum-v1``).
-        num_episodes: Number of episodes to collect.
-        max_steps: Maximum steps per episode.
-        action_dim: Continuous action dimensionality.
-        img_size: Side length of square resized observations.
-        crop_ratio: Center-crop side as fraction of raw ``min(H,W)`` before resize
-            (``1.0`` = no crop). Default ``0.5`` keeps the central half.
-        seed: Base random seed.
+    Uses the synthetic ``bouncing_ball`` generator when ``env_name == "bouncing_ball"``,
+    otherwise Gymnasium ``rgb_array`` rendering (e.g. Pendulum).
 
     Returns:
-        ``observations`` ``(N, T, C, H, W)`` float32 in ``[0, 1]``,
+        ``observations`` ``(N, T, C, H, W)`` — uint8 for bouncing_ball on disk path,
+        float32 in ``[0, 1]`` for Gymnasium,
         ``actions`` ``(N, T, action_dim)`` float32,
-        ``lengths`` ``(N,)`` actual episode lengths.
+        ``lengths`` ``(N,)``.
     """
+    if env_name == "bouncing_ball":
+        from bouncing_ball import BouncingBallConfig, collect_episodes as collect_ball
+
+        if action_dim != 1:
+            raise ValueError(
+                f"bouncing_ball requires action_dim=1 (zero action), got {action_dim}"
+            )
+        cfg = BouncingBallConfig(
+            img_size=img_size,
+            ball_radius=ball_radius,
+            action_dim=action_dim,
+        )
+        return collect_ball(num_episodes, max_steps, seed=seed, cfg=cfg)
+
     env = gym.make(env_name, render_mode="rgb_array")
 
     all_obs: list[list[np.ndarray]] = []
@@ -237,7 +246,10 @@ def save_dataset(
 def load_dataset(path: str | Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Load episodes from a ``.npz`` file."""
     data = np.load(path)
-    return data["observations"], data["actions"], data["lengths"]
+    observations = data["observations"]
+    if observations.dtype == np.uint8:
+        observations = observations.astype(np.float32) / 255.0
+    return observations, data["actions"], data["lengths"]
 
 
 def cache_meets_requirements(config: Config) -> tuple[bool, str]:
@@ -256,6 +268,9 @@ def cache_meets_requirements(config: Config) -> tuple[bool, str]:
             "cached actions must be float32 with shape (N, T, action_dim); "
             "use --force-collect",
         )
+    obs_sample = np.load(path)["observations"]
+    if obs_sample.dtype not in (np.float32, np.uint8):
+        return False, "cached observations must be float32 or uint8; use --force-collect"
     if actions.shape[-1] != config.action_dim:
         return (
             False,
@@ -312,6 +327,7 @@ def collect_and_save(config: Config, force: bool = False) -> str:
         action_dim=config.action_dim,
         img_size=config.img_size,
         crop_ratio=config.crop_ratio,
+        ball_radius=config.ball_radius,
         seed=config.seed,
     )
     max_len = int(lengths.max())

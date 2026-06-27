@@ -17,7 +17,7 @@ from utils import current_beta, ensure_dir, get_device, set_seed, setup_logging
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train RSSM world model")
-    parser.add_argument("--env-name", type=str, default="Pendulum-v1")
+    parser.add_argument("--env-name", type=str, default="bouncing_ball")
     parser.add_argument("--num-episodes", type=int, default=200)
     parser.add_argument("--max-steps", type=int, default=200)
     parser.add_argument("--epochs", type=int, default=50)
@@ -55,12 +55,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--grad-clip", type=float, default=100.0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--data-path", type=str, default="data/pendulum_cropped.npz")
+    parser.add_argument("--data-path", type=str, default="data/bouncing_ball.npz")
     parser.add_argument(
         "--crop-ratio",
         type=float,
-        default=0.5,
-        help="Center crop side as fraction of raw min(H,W) before resize (1.0=no crop)",
+        default=1.0,
+        help="Center crop for Gym envs only (1.0=no crop); ignored for bouncing_ball",
+    )
+    parser.add_argument(
+        "--ball-radius",
+        type=int,
+        default=7,
+        help="Ball radius in pixels for env_name=bouncing_ball (~15%% area at r=7 on 32x32)",
     )
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     parser.add_argument("--checkpoint-every", type=int, default=10)
@@ -93,6 +99,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         seed=args.seed,
         data_path=args.data_path,
         crop_ratio=args.crop_ratio,
+        ball_radius=args.ball_radius,
         checkpoint_dir=args.checkpoint_dir,
         checkpoint_every=args.checkpoint_every,
         log_every=args.log_every,
