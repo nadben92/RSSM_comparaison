@@ -55,7 +55,13 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--grad-clip", type=float, default=100.0)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--data-path", type=str, default="data/pendulum_episodes_32.npz")
+    parser.add_argument("--data-path", type=str, default="data/pendulum_cropped.npz")
+    parser.add_argument(
+        "--crop-ratio",
+        type=float,
+        default=0.5,
+        help="Center crop side as fraction of raw min(H,W) before resize (1.0=no crop)",
+    )
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     parser.add_argument("--checkpoint-every", type=int, default=10)
     parser.add_argument("--log-every", type=int, default=50)
@@ -86,6 +92,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         grad_clip=args.grad_clip,
         seed=args.seed,
         data_path=args.data_path,
+        crop_ratio=args.crop_ratio,
         checkpoint_dir=args.checkpoint_dir,
         checkpoint_every=args.checkpoint_every,
         log_every=args.log_every,

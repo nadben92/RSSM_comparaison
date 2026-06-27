@@ -18,13 +18,110 @@ from utils import ensure_dir
 logger = logging.getLogger("rssm")
 
 
+def _crop_center(frame: np.ndarray, crop_ratio: float) -> np.ndarray:
+    """Center-crop a square around the image pivot (Pendulum: geometric center).
+
+    Args:
+        frame: ``(H, W, C)`` uint8 RGB from ``env.render()``.
+        crop_ratio: Side length as a fraction of ``min(H, W)``. ``1.0`` = no crop.
+
+    Returns:
+        Cropped ``(side, side, C)`` array. Verify visually that the arm is never
+        clipped at extreme swing angles; increase ``crop_ratio`` if it is.
+    """
+    if crop_ratio >= 1.0:
+        return frame
+
+    h, w = frame.shape[:2]
+    side = max(1, int(min(h, w) * crop_ratio))
+    cy, cx = h // 2, w // 2  # Pendulum pivot ≈ image center — verify on raw frames
+    half = side // 2
+
+    y0 = cy - half
+    x0 = cx - half
+    y1 = y0 + side
+    x1 = x0 + side
+
+    if y0 < 0:
+        y1 -= y0
+        y0 = 0
+    if x0 < 0:
+        x1 -= x0
+        x0 = 0
+    if y1 > h:
+        y0 -= y1 - h
+        y1 = h
+    if x1 > w:
+        x0 -= x1 - w
+        x1 = w
+
+    y0 = max(0, y0)
+    x0 = max(0, x0)
+    return frame[y0:y1, x0:x1]
+
+
 def _resize_obs(obs: np.ndarray, size: int) -> np.ndarray:
-    """Resize RGB observation to (size, size) using simple nearest-neighbor."""
+    """Resize RGB observation to ``(C, size, size)`` in ``[0, 1]``."""
     import torch.nn.functional as F
 
     t = torch.from_numpy(obs).permute(2, 0, 1).unsqueeze(0).float() / 255.0
     t = F.interpolate(t, size=(size, size), mode="bilinear", align_corners=False)
     return t.squeeze(0).numpy()
+
+
+def _process_frame(frame: np.ndarray, img_size: int, crop_ratio: float = 1.0) -> np.ndarray:
+    """Center-crop the raw frame, then resize to ``img_size`` (crop before downscale)."""
+    cropped = _crop_center(frame, crop_ratio)
+    return _resize_obs(cropped, img_size)
+
+
+def preview_cropped_frames(
+    env_name: str = "Pendulum-v1",
+    img_size: int = 32,
+    crop_ratio: float = 0.5,
+    seed: int = 42,
+    num_frames: int = 8,
+    out_dir: str | Path = "outputs",
+) -> Path:
+    """Save a grid of cropped+resized frames for visual inspection before long runs.
+
+    Re-run this after changing ``crop_ratio`` to confirm:
+    1. the pendulum fills a large fraction of the image, and
+    2. the arm is never clipped at extreme swing angles (increase ratio if clipped).
+    """
+    import matplotlib.pyplot as plt
+
+    env = gym.make(env_name, render_mode="rgb_array")
+    frames: list[np.ndarray] = []
+    obs, _ = env.reset(seed=seed)
+    for step in range(num_frames * 3):
+        raw = env.render()
+        if raw is None:
+            raise RuntimeError(f"env.render() returned None for {env_name}")
+        if step % 3 == 0:
+            proc = _process_frame(raw, img_size, crop_ratio)
+            frames.append(proc.transpose(1, 2, 0))
+        action = env.action_space.sample()
+        obs, _, terminated, truncated, _ = env.step(action)
+        if terminated or truncated:
+            obs, _ = env.reset()
+        if len(frames) >= num_frames:
+            break
+    env.close()
+
+    out_path = ensure_dir(out_dir) / f"crop_preview_r{crop_ratio:.2f}.png"
+    fig, axes = plt.subplots(1, len(frames), figsize=(2 * len(frames), 2))
+    if len(frames) == 1:
+        axes = [axes]
+    for ax, fr in zip(axes, frames):
+        ax.imshow(fr.clip(0, 1))
+        ax.axis("off")
+    fig.suptitle(f"crop_ratio={crop_ratio} → {img_size}x{img_size}")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+    logger.info("Saved crop preview: %s (inspect before long training)", out_path)
+    return out_path
 
 
 def collect_episodes(
@@ -33,6 +130,7 @@ def collect_episodes(
     max_steps: int,
     action_dim: int,
     img_size: int = 32,
+    crop_ratio: float = 0.5,
     seed: int = 42,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Collect random-agent rollouts with rgb_array rendering.
@@ -43,6 +141,8 @@ def collect_episodes(
         max_steps: Maximum steps per episode.
         action_dim: Continuous action dimensionality.
         img_size: Side length of square resized observations.
+        crop_ratio: Center-crop side as fraction of raw ``min(H,W)`` before resize
+            (``1.0`` = no crop). Default ``0.5`` keeps the central half.
         seed: Base random seed.
 
     Returns:
@@ -68,7 +168,7 @@ def collect_episodes(
                     f"env.render() returned None for {env_name}. "
                     "Ensure render_mode='rgb_array'."
                 )
-            obs_list.append(_resize_obs(frame, img_size))
+            obs_list.append(_process_frame(frame, img_size, crop_ratio))
 
             # Pendulum torque in [-2, 2]; passed raw (normalization may help later).
             action = np.asarray(env.action_space.sample(), dtype=np.float32).reshape(-1)
@@ -211,6 +311,7 @@ def collect_and_save(config: Config, force: bool = False) -> str:
         max_steps=config.max_steps_per_episode,
         action_dim=config.action_dim,
         img_size=config.img_size,
+        crop_ratio=config.crop_ratio,
         seed=config.seed,
     )
     max_len = int(lengths.max())

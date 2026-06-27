@@ -41,10 +41,11 @@ class Config:
     lambda_motion: float = 5.0  # lower than 64x64 default: fewer background pixels at 32x32
     grad_clip: float = 100.0
 
-    # Data collection
+    # Data collection / preprocessing
     num_episodes: int = 200
     max_steps_per_episode: int = 200
-    data_path: str = "data/pendulum_episodes_32.npz"
+    crop_ratio: float = 0.5  # center crop before resize; 1.0 = disabled
+    data_path: str = "data/pendulum_cropped.npz"
 
     # Checkpointing & logging
     checkpoint_dir: str = "checkpoints"
