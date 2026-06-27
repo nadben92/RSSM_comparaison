@@ -175,7 +175,7 @@ Preview GIF: `python -c "from bouncing_ball import BouncingBallConfig, save_epis
 
 ### Bouncing ball + obstacles (harder variant)
 
-Smaller ball (`r=5`), 4 random circular obstacles per episode, same zero-action physics. **Separate dataset** — does not overwrite `data/bouncing_ball.npz`.
+Smaller ball (`r=5`), 2 fixed circular obstacles (same positions every episode), same zero-action physics. **Separate dataset** — does not overwrite `data/bouncing_ball.npz`.
 
 ```bash
 python train.py \
@@ -197,8 +197,8 @@ Preview GIF:
 
 ```bash
 python -c "
-from bouncing_ball import BouncingBallConfig, save_episode_gif
-cfg = BouncingBallConfig(ball_radius=5, action_dim=1, num_obstacles=4, obstacle_radius=2)
+from bouncing_ball import BouncingBallConfig, default_fixed_obstacles, save_episode_gif
+cfg = BouncingBallConfig(ball_radius=5, action_dim=1, obstacle_positions=default_fixed_obstacles(32), obstacle_radius=2)
 save_episode_gif('outputs/bouncing_ball_obstacles.gif', episode_len=40, seed=42, cfg=cfg)
 "
 ```

@@ -4,7 +4,7 @@ Classic billiard-style world for video prediction / world-model benchmarks.
 Pure elastic bounces — no external forces. Actions are always zero (``action_dim=1``)
 for RSSM pipeline compatibility; the backbone learns free physics only.
 
-Optional circular obstacles (``num_obstacles > 0``) are sampled randomly per episode.
+Optional fixed circular obstacles (``obstacle_positions``) — same layout every episode.
 
 Generates the same on-disk layout as ``data.collect_episodes`` (uint8 obs on disk,
 normalized to float32 when loaded via ``data.load_dataset``).
@@ -34,9 +34,17 @@ class BouncingBallConfig:
     bg_color: tuple[int, int, int] = (0, 0, 0)
     ball_color: tuple[int, int, int] = (255, 64, 64)
     obstacle_color: tuple[int, int, int] = (180, 180, 180)
-    num_obstacles: int = 0  # 0 = base env; >0 = random layout per episode
+    obstacle_positions: tuple[tuple[float, float], ...] = ()  # fixed centers; empty = none
     obstacle_radius: int = 2
     obstacle_margin: float = 2.0
+
+
+def default_fixed_obstacles(img_size: int = 32) -> tuple[tuple[float, float], ...]:
+    """Two fixed obstacle centers (identical layout on every episode)."""
+    cx = img_size / 2.0
+    cy = img_size / 2.0
+    offset = img_size * 5.0 / 32.0  # 5 px from center on 32×32 → (11, 16) and (21, 16)
+    return ((cx - offset, cy), (cx + offset, cy))
 
 
 def default_ball_radius(img_size: int, target_fraction: float = 0.15) -> int:
@@ -114,48 +122,9 @@ def _ball_overlaps_obstacle(
     return False
 
 
-def _sample_obstacles(
-    rng: np.random.Generator,
-    cfg: BouncingBallConfig,
-) -> list[np.ndarray]:
-    """Sample non-overlapping circular obstacle centers for one episode."""
-    if cfg.num_obstacles <= 0:
-        return []
-
-    s = cfg.img_size
-    r_obs = cfg.obstacle_radius
-    margin = r_obs + cfg.obstacle_margin
-    max_attempts = 200
-    obstacles: list[np.ndarray] = []
-    target = cfg.num_obstacles
-
-    for _ in range(target):
-        placed = False
-        for _ in range(max_attempts):
-            center = rng.uniform(margin, s - margin, size=2).astype(np.float32)
-
-            if center[0] - r_obs < 0 or center[0] + r_obs > s - 1:
-                continue
-            if center[1] - r_obs < 0 or center[1] + r_obs > s - 1:
-                continue
-
-            overlap = False
-            min_sep = 2 * r_obs + cfg.obstacle_margin
-            for other in obstacles:
-                if np.linalg.norm(center - other) < min_sep:
-                    overlap = True
-                    break
-            if overlap:
-                continue
-
-            obstacles.append(center)
-            placed = True
-            break
-
-        if not placed:
-            break
-
-    return obstacles
+def _episode_obstacles(cfg: BouncingBallConfig) -> list[np.ndarray]:
+    """Return obstacle centers for one episode (fixed layout from config)."""
+    return [np.array(p, dtype=np.float32) for p in cfg.obstacle_positions]
 
 
 def _sample_initial_state(
@@ -252,18 +221,8 @@ def _sample_episode_layout(
     rng: np.random.Generator,
     cfg: BouncingBallConfig,
 ) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
-    """Sample obstacles then a valid ball state for one episode."""
-    max_layout_attempts = 50
-    obstacles: list[np.ndarray] = []
-
-    for _ in range(max_layout_attempts):
-        obstacles = _sample_obstacles(rng, cfg)
-        if cfg.num_obstacles > 0 and len(obstacles) < max(1, cfg.num_obstacles // 2):
-            continue
-        pos, vel = _sample_initial_state(rng, cfg, obstacles)
-        if not _ball_overlaps_obstacle(pos, cfg, obstacles):
-            return pos, vel, obstacles
-
+    """Fixed obstacles (if any) then a valid random ball state."""
+    obstacles = _episode_obstacles(cfg)
     pos, vel = _sample_initial_state(rng, cfg, obstacles)
     return pos, vel, obstacles
 
@@ -316,7 +275,8 @@ def save_episode_gif(
     imageio.mimsave(out, frames, fps=fps, loop=0)
 
     n_px, frac = ball_pixel_stats(obs[0], cfg)
-    obs_tag = f", obstacles={cfg.num_obstacles}" if cfg.num_obstacles > 0 else ""
+    n_obs = len(cfg.obstacle_positions)
+    obs_tag = f", obstacles={n_obs}" if n_obs > 0 else ""
     print(f"GIF saved: {out}")
     print(f"  ball_radius={cfg.ball_radius}{obs_tag} → {n_px}px ({frac:.1f}%) at native 32x32")
     print(f"  pure elastic physics | {episode_len} frames @ {fps} fps")
@@ -343,7 +303,7 @@ def collect_episodes(
     adim = cfg.action_dim
 
     desc = "Generating bouncing-ball episodes"
-    if cfg.num_obstacles > 0:
+    if cfg.obstacle_positions:
         desc = "Generating bouncing-ball+obstacles episodes"
 
     obs_array = np.zeros((n, t, c, s, s), dtype=np.uint8)
@@ -382,7 +342,8 @@ def preview_episode(
         ax.axis("off")
     for t in range(episode_len, nrows * ncols):
         axes[t // ncols, t % ncols].axis("off")
-    obs_label = f", obs={cfg.num_obstacles}" if cfg.num_obstacles > 0 else ""
+    n_obs = len(cfg.obstacle_positions)
+    obs_label = f", obs={n_obs}" if n_obs > 0 else ""
     fig.suptitle(
         f"Bouncing ball (elastic) | {cfg.img_size}x{cfg.img_size} r={cfg.ball_radius}{obs_label}",
         fontsize=11,
@@ -394,8 +355,8 @@ def preview_episode(
     print("=" * 60)
     print("INSPECT BEFORE COLLECT / TRAIN")
     print(f"  img_size={cfg.img_size}, ball_radius={cfg.ball_radius}")
-    if cfg.num_obstacles > 0:
-        print(f"  obstacles per episode: {cfg.num_obstacles} (r={cfg.obstacle_radius})")
+    if cfg.obstacle_positions:
+        print(f"  fixed obstacles: {n_obs} at {cfg.obstacle_positions} (r={cfg.obstacle_radius})")
     print(f"  frame {mid}: ball pixels = {n_px} ({frac:.2f}% of image)")
     print(f"  actions (always zero): {actions[0]}")
     print("  target ~15-20% → ball_radius=7 or 8; obstacles variant uses r=5 (~8%)")
@@ -420,7 +381,10 @@ if __name__ == "__main__":
     save_episode_gif("outputs/bouncing_ball_elastic.gif", episode_len=40, seed=42, cfg=cfg)
 
     cfg_obs = BouncingBallConfig(
-        ball_radius=5, action_dim=1, num_obstacles=4, obstacle_radius=2
+        ball_radius=5,
+        action_dim=1,
+        obstacle_positions=default_fixed_obstacles(32),
+        obstacle_radius=2,
     )
     save_episode_gif(
         "outputs/bouncing_ball_obstacles.gif", episode_len=40, seed=42, cfg=cfg_obs
