@@ -75,6 +75,18 @@ def parse_args() -> argparse.Namespace:
         help="Ball radius for bouncing_ball envs (~15%% at r=7 on 32x32)",
     )
     parser.add_argument(
+        "--occlusion-width",
+        type=int,
+        default=0,
+        help="Occlusion band width in pixels (0=disabled; Part 2 memory task)",
+    )
+    parser.add_argument(
+        "--occlusion-x",
+        type=int,
+        default=0,
+        help="Occlusion band left edge (0=auto-center on canvas)",
+    )
+    parser.add_argument(
         "--backbone",
         type=str,
         default="gru",
@@ -113,6 +125,8 @@ def config_from_args(args: argparse.Namespace) -> Config:
         data_path=args.data_path,
         crop_ratio=args.crop_ratio,
         ball_radius=args.ball_radius,
+        occlusion_width=args.occlusion_width,
+        occlusion_x=args.occlusion_x,
         backbone=args.backbone,
         checkpoint_dir=args.checkpoint_dir,
         checkpoint_every=args.checkpoint_every,

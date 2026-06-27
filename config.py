@@ -55,6 +55,9 @@ class Config:
     crop_ratio: float = 1.0  # unused for bouncing_ball; 1.0 = no crop for Gym envs
     ball_radius: int = 7  # ~15% disk area on 32x32 (use preview to tune)
     data_path: str = "data/bouncing_ball.npz"
+    # Occlusion (Part 2): vertical band hiding the ball; width=0 → Part 1
+    occlusion_width: int = 0
+    occlusion_x: int = 0  # left edge; 0 = auto-center
     # Free physics (zero action): env_name="bouncing_ball_no_action",
     # data_path="data/bouncing_ball_no_action.npz"
 

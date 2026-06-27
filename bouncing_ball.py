@@ -4,12 +4,17 @@ Billiard-style world in a square: elastic wall bounces plus optional scalar acti
 ``action_dim=1``: ``+1`` accelerates along velocity, ``-1`` decelerates (random per step).
 Set ``zero_actions=True`` for pure free physics with actions stored as ``0``.
 
+Optional vertical occlusion band: the ball is hidden when it passes behind a fixed
+opaque rectangle. Ground-truth ``positions`` are stored separately for evaluation
+during occlusion (Part 2 memory task).
+
 Generates the same on-disk layout as ``data.collect_episodes`` (uint8 obs on disk,
 normalized to float32 when loaded via ``data.load_dataset``).
 """
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,12 +39,43 @@ class BouncingBallConfig:
     max_speed: float = 6.0
     bg_color: tuple[int, int, int] = (0, 0, 0)
     ball_color: tuple[int, int, int] = (255, 64, 64)
+    # Occlusion band (disabled when occlusion_width <= 0 → Part 1 behavior)
+    occlusion_width: int = 0
+    occlusion_x: int = 0  # left edge of band; 0 = auto-center
+    occlusion_color: tuple[int, int, int] = (80, 80, 80)
+
+    @property
+    def occlusion_enabled(self) -> bool:
+        return self.occlusion_width > 0
 
 
 def default_ball_radius(img_size: int, target_fraction: float = 0.15) -> int:
     """Heuristic radius so disk area ≈ ``target_fraction`` of the image."""
     area = target_fraction * img_size * img_size
     return max(2, int(round((area / np.pi) ** 0.5)))
+
+
+def occlusion_rect(cfg: BouncingBallConfig) -> tuple[int, int, int, int] | None:
+    """Return ``(x0, x1, y0, y1)`` pixel bounds of the occlusion band, or ``None``."""
+    if not cfg.occlusion_enabled:
+        return None
+    x0 = cfg.occlusion_x if cfg.occlusion_x > 0 else (cfg.img_size - cfg.occlusion_width) // 2
+    x1 = min(cfg.img_size, x0 + cfg.occlusion_width)
+    return x0, x1, 0, cfg.img_size
+
+
+def is_ball_occluded(pos: np.ndarray, cfg: BouncingBallConfig) -> bool:
+    """True when the ball center passes through the occlusion band (x axis).
+
+    Uses center-in-band rather than disk overlap so occlusion is intermittent
+    (ball disappears on crossing, reappears outside) rather than nearly always on.
+    """
+    rect = occlusion_rect(cfg)
+    if rect is None:
+        return False
+    x0, x1, _, _ = rect
+    cx = float(pos[0])
+    return x0 <= cx <= x1
 
 
 def _draw_disk(
@@ -58,8 +94,20 @@ def _draw_disk(
     frame[y0:y1, x0:x1][mask] = np.array(color, dtype=np.uint8)
 
 
+def _draw_occlusion(frame: np.ndarray, cfg: BouncingBallConfig) -> None:
+    """Paint the fixed opaque occlusion band on top of the scene."""
+    rect = occlusion_rect(cfg)
+    if rect is None:
+        return
+    x0, x1, y0, y1 = rect
+    frame[y0:y1, x0:x1] = np.array(cfg.occlusion_color, dtype=np.uint8)
+
+
 def render_frame(pos: np.ndarray, cfg: BouncingBallConfig) -> np.ndarray:
-    """Draw the ball on a square canvas.
+    """Draw the ball and optional occlusion band on a square canvas.
+
+    The ball is drawn first; the occlusion rectangle is painted on top so the
+    ball disappears when it passes behind the obstacle.
 
     Args:
         pos: Ball center ``(x, y)`` in pixel coordinates.
@@ -72,6 +120,7 @@ def render_frame(pos: np.ndarray, cfg: BouncingBallConfig) -> np.ndarray:
     frame = np.zeros((s, s, 3), dtype=np.uint8)
     frame[..., :] = np.array(cfg.bg_color, dtype=np.uint8)
     _draw_disk(frame, pos, cfg.ball_radius, cfg.ball_color)
+    _draw_occlusion(frame, cfg)
     return frame.transpose(2, 0, 1)
 
 
@@ -165,27 +214,36 @@ def roll_out_episode(
     episode_len: int,
     rng: np.random.Generator,
     cfg: BouncingBallConfig,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Simulate one episode.
 
     ``obs[t]`` is the frame after step ``t``; ``actions[t]`` is the throttle
     applied before that step (0 if ``zero_actions``, else ``{-1, +1}``).
+    ``positions[t]`` is the true ball center ``(x, y)`` at frame ``t``, even
+    when the ball is hidden behind the occlusion band.
 
     Returns:
         observations ``(T, C, H, W)`` uint8,
-        actions ``(T, action_dim)`` float32 in ``{-1, +1}``.
+        actions ``(T, action_dim)`` float32 in ``{-1, +1}``,
+        positions ``(T, 2)`` float32.
     """
     pos, vel = _sample_initial_state(rng, cfg)
     obs_list: list[np.ndarray] = []
     act_list: list[np.ndarray] = []
+    pos_list: list[np.ndarray] = []
 
     for _ in range(episode_len):
         action = _sample_action(rng, cfg)
+        pos_list.append(pos.copy())
         obs_list.append(render_frame(pos, cfg))
         act_list.append(action)
         pos, vel = _step_physics(pos, vel, float(action[0]), cfg)
 
-    return np.stack(obs_list, axis=0), np.stack(act_list, axis=0)
+    return (
+        np.stack(obs_list, axis=0),
+        np.stack(act_list, axis=0),
+        np.stack(pos_list, axis=0).astype(np.float32),
+    )
 
 
 def save_episode_gif(
@@ -199,7 +257,7 @@ def save_episode_gif(
     """Save one rollout as a GIF (upscaled nearest-neighbor for visibility)."""
     cfg = cfg or BouncingBallConfig()
     rng = np.random.default_rng(seed)
-    obs, actions = roll_out_episode(episode_len, rng, cfg)
+    obs, actions, positions = roll_out_episode(episode_len, rng, cfg)
 
     frames: list[np.ndarray] = []
     for t in range(episode_len):
@@ -212,8 +270,12 @@ def save_episode_gif(
     imageio.mimsave(out, frames, fps=fps, loop=0)
 
     n_px, frac = ball_pixel_stats(obs[0], cfg)
+    occ_frac = 100.0 * sum(is_ball_occluded(positions[t], cfg) for t in range(episode_len)) / episode_len
     print(f"GIF saved: {out}")
     print(f"  ball_radius={cfg.ball_radius} → {n_px}px ({frac:.1f}%) at native 32x32")
+    if cfg.occlusion_enabled:
+        rect = occlusion_rect(cfg)
+        print(f"  occlusion band x=[{rect[0]}, {rect[1]}) | occluded frames: {occ_frac:.1f}%")
     print(f"  actions ±1 along velocity | {episode_len} frames @ {fps} fps")
     print(f"  sample actions: {actions[0]}, {actions[1]}")
     return out
@@ -224,13 +286,14 @@ def collect_episodes(
     max_steps: int,
     seed: int = 42,
     cfg: BouncingBallConfig | None = None,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Generate ``num_episodes`` synthetic rollouts.
 
     Returns:
         observations ``(N, T, C, H, W)`` uint8,
         actions ``(N, T, action_dim)`` float32 in ``{-1, +1}``,
-        lengths ``(N,)`` (all equal to ``max_steps``).
+        lengths ``(N,)`` (all equal to ``max_steps``),
+        positions ``(N, T, 2)`` float32 ground-truth ball centers.
     """
     cfg = cfg or BouncingBallConfig()
     rng = np.random.default_rng(seed)
@@ -240,14 +303,16 @@ def collect_episodes(
 
     obs_array = np.zeros((n, t, c, s, s), dtype=np.uint8)
     act_array = np.zeros((n, t, adim), dtype=np.float32)
+    pos_array = np.zeros((n, t, 2), dtype=np.float32)
     lengths = np.full(n, t, dtype=np.int64)
 
     for ep in tqdm(range(num_episodes), desc="Generating bouncing-ball episodes"):
-        obs, acts = roll_out_episode(t, rng, cfg)
+        obs, acts, positions = roll_out_episode(t, rng, cfg)
         obs_array[ep] = obs
         act_array[ep] = acts
+        pos_array[ep] = positions
 
-    return obs_array, act_array, lengths
+    return obs_array, act_array, lengths, pos_array
 
 
 def preview_episode(
@@ -259,7 +324,7 @@ def preview_episode(
     """Visualize one short episode before large-scale collection."""
     cfg = cfg or BouncingBallConfig()
     rng = np.random.default_rng(seed)
-    obs, actions = roll_out_episode(episode_len, rng, cfg)
+    obs, actions, positions = roll_out_episode(episode_len, rng, cfg)
 
     ncols = min(episode_len, 10)
     nrows = (episode_len + ncols - 1) // ncols
@@ -270,25 +335,40 @@ def preview_episode(
         rgb = obs[t].transpose(1, 2, 0)
         ax.imshow(rgb, interpolation="nearest")
         n_px, frac = ball_pixel_stats(obs[t], cfg)
-        ax.set_title(f"t={t}\n{n_px}px ({frac:.1f}%)", fontsize=8)
+        occ = is_ball_occluded(positions[t], cfg)
+        title = f"t={t}\n{n_px}px ({frac:.1f}%)"
+        if occ:
+            title += "\n[OCCLUDED]"
+        ax.set_title(title, fontsize=8)
         ax.axis("off")
     for t in range(episode_len, nrows * ncols):
         axes[t // ncols, t % ncols].axis("off")
+
+    occ_title = ""
+    if cfg.occlusion_enabled:
+        rect = occlusion_rect(cfg)
+        occ_frac = 100.0 * sum(is_ball_occluded(positions[t], cfg) for t in range(episode_len)) / episode_len
+        occ_title = f" | occlusion x=[{rect[0]},{rect[1]}) {occ_frac:.0f}% occluded"
     fig.suptitle(
-        f"Bouncing ball | {cfg.img_size}x{cfg.img_size} r={cfg.ball_radius} | action ±1",
+        f"Bouncing ball | {cfg.img_size}x{cfg.img_size} r={cfg.ball_radius}{occ_title}",
         fontsize=11,
     )
     fig.tight_layout()
 
     mid = episode_len // 2
     n_px, frac = ball_pixel_stats(obs[mid], cfg)
+    occ_frac = 100.0 * sum(is_ball_occluded(positions[t], cfg) for t in range(episode_len)) / episode_len
     print("=" * 60)
     print("INSPECT BEFORE COLLECT / TRAIN")
     print(f"  img_size={cfg.img_size}, ball_radius={cfg.ball_radius}")
     print(f"  frame {mid}: ball pixels = {n_px} ({frac:.2f}% of image)")
+    if cfg.occlusion_enabled:
+        rect = occlusion_rect(cfg)
+        print(f"  occlusion band: x=[{rect[0]}, {rect[1]}), color={cfg.occlusion_color}")
+        print(f"  occluded frames: {occ_frac:.1f}% (target: regular crossings)")
     print(f"  actions: +1=accel / -1=decel along velocity")
     print(f"  sample actions[0:3]: {actions[:3].flatten()}")
-    print("  target ~15-20% → ball_radius=7 or 8")
+    print("  target ~15-20% ball area → ball_radius=7 or 8")
     print("=" * 60)
 
     fig2, ax2 = plt.subplots(1, 1, figsize=(4, 4))
@@ -304,7 +384,35 @@ def preview_episode(
     plt.show()
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Bouncing ball preview / GIF")
+    parser.add_argument("--episode-len", type=int, default=40)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--ball-radius", type=int, default=7)
+    parser.add_argument("--occlusion-width", type=int, default=0, help="0 = disabled (Part 1)")
+    parser.add_argument("--occlusion-x", type=int, default=0, help="Band left edge; 0 = auto-center")
+    parser.add_argument("--save-gif", type=str, default=None)
+    parser.add_argument("--save-grid", type=str, default=None)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    cfg = BouncingBallConfig(
+        ball_radius=args.ball_radius,
+        action_dim=1,
+        occlusion_width=args.occlusion_width,
+        occlusion_x=args.occlusion_x,
+    )
+    preview_episode(
+        episode_len=min(args.episode_len, 20),
+        seed=args.seed,
+        cfg=cfg,
+        save_path=args.save_grid,
+    )
+    if args.save_gif:
+        save_episode_gif(args.save_gif, episode_len=args.episode_len, seed=args.seed, cfg=cfg)
+
+
 if __name__ == "__main__":
-    cfg = BouncingBallConfig(ball_radius=7, action_dim=1)
-    preview_episode(episode_len=20, seed=42, cfg=cfg)
-    save_episode_gif("outputs/bouncing_ball_elastic.gif", episode_len=40, seed=42, cfg=cfg)
+    main()

@@ -1,7 +1,8 @@
 """Quantitative evaluation: ball position error vs imagination horizon.
 
-Compare RSSM backbones on the same episodes using open-loop imagination and
-centroid-based ball tracking in pixel space.
+Compare RSSM backbones on the same episodes using open-loop imagination.
+Ground-truth position comes from the dataset ``positions`` array when available
+(reliable under occlusion); imagined position is extracted by pixel centroid.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import torch
 from tqdm import tqdm
 
 from config import Config
-from data import load_dataset
+from data import load_dataset, load_dataset_meta
 from imagine import imagine_rollout, load_model
 from models.rssm import RSSM
 from utils import ensure_dir, get_device, set_seed, setup_logging
@@ -32,8 +33,11 @@ class PositionErrorResult:
 
     mean_error: np.ndarray  # (horizon,)
     std_error: np.ndarray  # (horizon,)
-    raw_errors: np.ndarray  # (n_episodes, horizon), NaN when ball not detected
+    raw_errors: np.ndarray  # (n_episodes, horizon), NaN when imagined ball not detected
     episode_indices: np.ndarray  # (n_episodes,)
+    occluded_mask: np.ndarray | None = None  # (horizon,) fraction occluded per step
+    mean_error_occluded: float | None = None
+    mean_error_visible: float | None = None
 
 
 def normalize_frame(frame: np.ndarray) -> np.ndarray:
@@ -72,17 +76,51 @@ def ball_position(
     return float(xs.mean()), float(ys.mean())
 
 
-def position_distance(
+def position_distance_pixels(
     frame_a: np.ndarray,
     frame_b: np.ndarray,
     threshold: float = 0.2,
 ) -> float:
-    """Euclidean distance between ball positions; ``nan`` if either frame fails."""
+    """Euclidean distance between ball positions extracted from two frames."""
     pos_a = ball_position(frame_a, threshold=threshold)
     pos_b = ball_position(frame_b, threshold=threshold)
     if pos_a is None or pos_b is None:
         return float("nan")
     return float(np.hypot(pos_a[0] - pos_b[0], pos_a[1] - pos_b[1]))
+
+
+def position_error_vs_gt(
+    imagined_frame: np.ndarray,
+    gt_pos: np.ndarray,
+    threshold: float = 0.2,
+) -> float:
+    """Error between imagined ball (pixel extraction) and ground-truth position."""
+    imagined_pos = ball_position(imagined_frame, threshold=threshold)
+    if imagined_pos is None:
+        return float("nan")
+    return float(np.hypot(imagined_pos[0] - gt_pos[0], imagined_pos[1] - gt_pos[1]))
+
+
+def positions_occluded(
+    positions: np.ndarray,
+    occlusion_width: int,
+    occlusion_x: int,
+    img_size: int,
+    ball_radius: int,
+) -> np.ndarray:
+    """Boolean mask ``(T,)`` — True when the ball overlaps the occlusion band."""
+    if occlusion_width <= 0:
+        return np.zeros(len(positions), dtype=bool)
+    from bouncing_ball import BouncingBallConfig, is_ball_occluded
+
+    x0 = occlusion_x if occlusion_x > 0 else (img_size - occlusion_width) // 2
+    cfg = BouncingBallConfig(
+        img_size=img_size,
+        ball_radius=ball_radius,
+        occlusion_width=occlusion_width,
+        occlusion_x=x0,
+    )
+    return np.array([is_ball_occluded(positions[t], cfg) for t in range(len(positions))])
 
 
 def select_episode_indices(
@@ -115,15 +153,22 @@ def position_error_curve(
     device: torch.device,
     threshold: float = 0.2,
     start_frame: int = 0,
+    positions: np.ndarray | None = None,
+    occlusion_width: int = 0,
+    occlusion_x: int = 0,
+    img_size: int = 32,
+    ball_radius: int = 7,
 ) -> PositionErrorResult:
     """Compute mean/std position error vs imagination horizon.
 
-    For each episode, runs open-loop imagination after a real context window and
-    compares imagined ball position to the ground-truth frame at each horizon step.
-  """
+    For each episode, runs open-loop imagination after a real context window.
+    Ground truth uses ``positions`` when provided; otherwise falls back to pixel
+    extraction on real frames (Part 1 datasets).
+    """
     model.eval()
     n_episodes = len(episode_indices)
     raw_errors = np.full((n_episodes, horizon), np.nan, dtype=np.float64)
+    occluded_steps = np.zeros(horizon, dtype=np.float64)
     seq_len = context_len + horizon
 
     for row, ep_idx in enumerate(tqdm(episode_indices, desc="Eval episodes")):
@@ -145,19 +190,73 @@ def position_error_curve(
         imagined_np = imagined.squeeze(0).cpu().numpy()
         real_np = obs_ep[context_len : context_len + horizon]
 
+        gt_positions = None
+        if positions is not None:
+            gt_positions = positions[ep_idx, start_frame + context_len : start_frame + context_len + horizon]
+            if occlusion_width > 0:
+                occ = positions_occluded(
+                    gt_positions,
+                    occlusion_width,
+                    occlusion_x,
+                    img_size,
+                    ball_radius,
+                )
+                occluded_steps += occ.astype(np.float64)
+
         for t in range(horizon):
-            raw_errors[row, t] = position_distance(
-                imagined_np[t], real_np[t], threshold=threshold
-            )
+            if gt_positions is not None:
+                raw_errors[row, t] = position_error_vs_gt(
+                    imagined_np[t], gt_positions[t], threshold=threshold
+                )
+            else:
+                raw_errors[row, t] = position_distance_pixels(
+                    imagined_np[t], real_np[t], threshold=threshold
+                )
 
     mean_error = np.nanmean(raw_errors, axis=0)
     std_error = np.nanstd(raw_errors, axis=0)
+    occluded_mask = occluded_steps / max(n_episodes, 1) if occlusion_width > 0 else None
+
+    mean_error_occluded = None
+    mean_error_visible = None
+    if occluded_mask is not None and np.any(occluded_mask > 0):
+        occ_frac = occluded_mask >= 0.5
+        if occ_frac.any():
+            mean_error_occluded = float(np.nanmean(raw_errors[:, occ_frac]))
+        if (~occ_frac).any():
+            mean_error_visible = float(np.nanmean(raw_errors[:, ~occ_frac]))
+
     return PositionErrorResult(
         mean_error=mean_error,
         std_error=std_error,
         raw_errors=raw_errors,
         episode_indices=np.asarray(episode_indices, dtype=np.int64),
+        occluded_mask=occluded_mask,
+        mean_error_occluded=mean_error_occluded,
+        mean_error_visible=mean_error_visible,
     )
+
+
+def _shade_occlusion_regions(
+    ax: plt.Axes,
+    occluded_mask: np.ndarray,
+    *,
+    threshold: float = 0.5,
+) -> None:
+    """Grey vertical bands on the plot where imagination steps are often occluded."""
+    in_band = False
+    start = 1
+    for i, frac in enumerate(occluded_mask):
+        step = i + 1
+        is_occ = frac >= threshold
+        if is_occ and not in_band:
+            start = step
+            in_band = True
+        elif not is_occ and in_band:
+            ax.axvspan(start - 0.5, step - 0.5, color="grey", alpha=0.15, zorder=0)
+            in_band = False
+    if in_band:
+        ax.axvspan(start - 0.5, len(occluded_mask) + 0.5, color="grey", alpha=0.15, zorder=0)
 
 
 def plot_error_curves(
@@ -168,10 +267,14 @@ def plot_error_curves(
     xlabel: str = "Imagination step",
     ylabel: str = "Position error (pixels)",
     show_std: bool = True,
+    occluded_mask: np.ndarray | None = None,
 ) -> Path:
     """Plot mean error curves for one or more backbones on the same axes."""
     fig, ax = plt.subplots(figsize=(8, 5))
     horizons = None
+
+    if occluded_mask is not None:
+        _shade_occlusion_regions(ax, occluded_mask)
 
     for label, (mean, std) in curves.items():
         mean = np.asarray(mean, dtype=np.float64)
@@ -182,10 +285,18 @@ def plot_error_curves(
         if show_std:
             ax.fill_between(x, mean - std, mean + std, alpha=0.2)
 
+    if occluded_mask is not None and np.any(occluded_mask >= 0.5):
+        import matplotlib.patches as mpatches
+
+        handles, labels = ax.get_legend_handles_labels()
+        handles.append(mpatches.Patch(color="grey", alpha=0.15, label="occlusion zone"))
+        ax.legend(handles=handles)
+
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    ax.legend()
+    if not (occluded_mask is not None and np.any(occluded_mask >= 0.5)):
+        ax.legend()
     ax.grid(True, alpha=0.3)
     if horizons is not None and len(horizons) > 0:
         ax.set_xlim(1, len(horizons))
@@ -295,12 +406,16 @@ def main() -> None:
         _, cfg0 = load_model(args.checkpoints[0], device)
         data_path = cfg0.data_path
 
-    observations, actions, lengths = load_dataset(data_path)
+    observations, actions, lengths, positions = load_dataset(data_path)
+    meta = load_dataset_meta(data_path)
+    occlusion_width = meta.get("occlusion_width", 0)
+    occlusion_x = meta.get("occlusion_x", 0)
     logger.info(
-        "Loaded dataset %s: %d episodes, max_len=%d",
+        "Loaded dataset %s: %d episodes, max_len=%d%s",
         data_path,
         len(lengths),
         int(lengths.max()),
+        f", positions=yes, occlusion_width={occlusion_width}" if positions is not None else "",
     )
 
     if args.debug_position:
@@ -315,6 +430,8 @@ def main() -> None:
             threshold=args.threshold,
             title=f"Episode {ep}, frame {frame_idx}",
         )
+        if positions is not None:
+            logger.info("Ground-truth position: (%.2f, %.2f)", positions[ep, frame_idx, 0], positions[ep, frame_idx, 1])
         logger.info("Debug position: %s → saved %s", pos, debug_out)
         return
 
@@ -340,6 +457,7 @@ def main() -> None:
 
     curves: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     all_results: dict[str, PositionErrorResult] = {}
+    shared_occluded_mask: np.ndarray | None = None
 
     for label, ckpt_path in zip(labels, args.checkpoints):
         logger.info("Loading checkpoint: %s (%s)", label, ckpt_path)
@@ -363,22 +481,37 @@ def main() -> None:
             device=device,
             threshold=args.threshold,
             start_frame=args.start_frame,
+            positions=positions,
+            occlusion_width=occlusion_width,
+            occlusion_x=occlusion_x,
+            img_size=config.img_size,
+            ball_radius=config.ball_radius,
         )
         curves[label] = (result.mean_error, result.std_error)
         all_results[label] = result
+        if result.occluded_mask is not None:
+            shared_occluded_mask = result.occluded_mask
 
         valid_frac = np.isfinite(result.raw_errors).mean()
-        logger.info(
-            "%s | mean error @ h=1: %.2f px | @ h=%d: %.2f px | valid detections: %.1f%%",
-            label,
-            result.mean_error[0] if len(result.mean_error) else float("nan"),
-            args.horizon,
-            result.mean_error[-1] if len(result.mean_error) else float("nan"),
-            100.0 * valid_frac,
+        msg = (
+            f"{label} | mean error @ h=1: {result.mean_error[0]:.2f} px | "
+            f"@ h={args.horizon}: {result.mean_error[-1]:.2f} px | "
+            f"valid detections: {100.0 * valid_frac:.1f}%"
         )
+        if result.mean_error_occluded is not None:
+            msg += (
+                f" | occluded: {result.mean_error_occluded:.2f} px"
+                f" | visible: {result.mean_error_visible:.2f} px"
+            )
+        logger.info(msg)
 
     plot_path = out_dir / (args.output or "position_error_curves.png")
-    plot_error_curves(curves, plot_path, show_std=not args.no_std)
+    plot_error_curves(
+        curves,
+        plot_path,
+        show_std=not args.no_std,
+        occluded_mask=shared_occluded_mask,
+    )
     logger.info("Saved comparison plot: %s", plot_path)
 
     npz_path = out_dir / "position_error_data.npz"
@@ -386,6 +519,8 @@ def main() -> None:
         "episode_indices": episode_indices,
         "horizons": np.arange(1, args.horizon + 1),
     }
+    if shared_occluded_mask is not None:
+        save_dict["occluded_mask"] = shared_occluded_mask
     for label, result in all_results.items():
         key = label.replace(" ", "_")
         save_dict[f"{key}_mean"] = result.mean_error

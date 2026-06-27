@@ -133,7 +133,9 @@ def collect_episodes(
     crop_ratio: float = 0.5,
     ball_radius: int = 5,
     seed: int = 42,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    occlusion_width: int = 0,
+    occlusion_x: int = 0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
     """Collect or generate episodes for training.
 
     Uses the synthetic ``bouncing_ball`` generator when ``env_name == "bouncing_ball"``,
@@ -143,22 +145,29 @@ def collect_episodes(
         ``observations`` ``(N, T, C, H, W)`` — uint8 for bouncing_ball on disk path,
         float32 in ``[0, 1]`` for Gymnasium,
         ``actions`` ``(N, T, action_dim)`` float32,
-        ``lengths`` ``(N,)``.
+        ``lengths`` ``(N,)``,
+        ``positions`` ``(N, T, 2)`` float32 for bouncing_ball, else ``None``.
     """
-    if env_name in ("bouncing_ball", "bouncing_ball_no_action"):
+    if env_name in ("bouncing_ball", "bouncing_ball_no_action", "bouncing_ball_occlusion"):
         from bouncing_ball import BouncingBallConfig, collect_episodes as collect_ball
 
         if action_dim != 1:
             raise ValueError(
                 f"{env_name} requires action_dim=1, got {action_dim}"
             )
+        occ_width = occlusion_width
+        if env_name == "bouncing_ball_occlusion" and occ_width <= 0:
+            occ_width = 6  # ~19% of 32px canvas; ball crosses regularly
         cfg = BouncingBallConfig(
             img_size=img_size,
             ball_radius=ball_radius,
             action_dim=action_dim,
             zero_actions=(env_name == "bouncing_ball_no_action"),
+            occlusion_width=occ_width,
+            occlusion_x=occlusion_x,
         )
-        return collect_ball(num_episodes, max_steps, seed=seed, cfg=cfg)
+        obs, acts, lengths, positions = collect_ball(num_episodes, max_steps, seed=seed, cfg=cfg)
+        return obs, acts, lengths, positions
 
     env = gym.make(env_name, render_mode="rgb_array")
 
@@ -211,7 +220,7 @@ def collect_episodes(
             obs_array[i, t] = obs_ep[t]
             act_array[i, t] = act_ep[t]
 
-    return obs_array, act_array, np.array(lengths, dtype=np.int64)
+    return obs_array, act_array, np.array(lengths, dtype=np.int64), None
 
 
 def count_chunks(
@@ -233,24 +242,50 @@ def save_dataset(
     observations: np.ndarray,
     actions: np.ndarray,
     lengths: np.ndarray,
+    positions: np.ndarray | None = None,
+    occlusion_width: int = 0,
+    occlusion_x: int = 0,
 ) -> None:
     """Save collected episodes to a compressed ``.npz`` file."""
     ensure_dir(Path(path).parent)
-    np.savez_compressed(
-        path,
-        observations=observations,
-        actions=actions,
-        lengths=lengths,
-    )
+    payload: dict[str, np.ndarray] = {
+        "observations": observations,
+        "actions": actions,
+        "lengths": lengths,
+    }
+    if positions is not None:
+        payload["positions"] = positions
+    if occlusion_width > 0:
+        payload["occlusion_width"] = np.array(occlusion_width, dtype=np.int64)
+        payload["occlusion_x"] = np.array(occlusion_x, dtype=np.int64)
+    np.savez_compressed(path, **payload)
 
 
-def load_dataset(path: str | Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Load episodes from a ``.npz`` file."""
+def load_dataset(
+    path: str | Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray | None]:
+    """Load episodes from a ``.npz`` file.
+
+    Returns:
+        observations, actions, lengths, positions (``None`` if not stored).
+    """
     data = np.load(path)
     observations = data["observations"]
     if observations.dtype == np.uint8:
         observations = observations.astype(np.float32) / 255.0
-    return observations, data["actions"], data["lengths"]
+    positions = data["positions"].astype(np.float32) if "positions" in data else None
+    return observations, data["actions"], data["lengths"], positions
+
+
+def load_dataset_meta(path: str | Path) -> dict[str, int]:
+    """Load optional occlusion metadata from a dataset file."""
+    data = np.load(path)
+    meta: dict[str, int] = {}
+    if "occlusion_width" in data:
+        meta["occlusion_width"] = int(data["occlusion_width"])
+    if "occlusion_x" in data:
+        meta["occlusion_x"] = int(data["occlusion_x"])
+    return meta
 
 
 def cache_meets_requirements(config: Config) -> tuple[bool, str]:
@@ -259,7 +294,7 @@ def cache_meets_requirements(config: Config) -> tuple[bool, str]:
     if not path.exists():
         return False, "dataset file not found"
 
-    _, actions, lengths = load_dataset(path)
+    _, actions, lengths, _ = load_dataset(path)
     num_episodes = len(lengths)
     max_len = int(lengths.max())
 
@@ -321,7 +356,12 @@ def collect_and_save(config: Config, force: bool = False) -> str:
     else:
         logger.info("Force re-collecting data")
 
-    obs, actions, lengths = collect_episodes(
+    occ_width = config.occlusion_width
+    occ_x = config.occlusion_x
+    if config.env_name == "bouncing_ball_occlusion" and occ_width <= 0:
+        occ_width = 6
+
+    obs, actions, lengths, positions = collect_episodes(
         env_name=config.env_name,
         num_episodes=config.num_episodes,
         max_steps=config.max_steps_per_episode,
@@ -330,6 +370,8 @@ def collect_and_save(config: Config, force: bool = False) -> str:
         crop_ratio=config.crop_ratio,
         ball_radius=config.ball_radius,
         seed=config.seed,
+        occlusion_width=occ_width,
+        occlusion_x=occ_x,
     )
     max_len = int(lengths.max())
     if max_len < config.seq_len:
@@ -338,7 +380,15 @@ def collect_and_save(config: Config, force: bool = False) -> str:
             f"(max episode length={max_len}). Lower --seq-len or increase "
             f"--max-steps / collect more episodes."
         )
-    save_dataset(path, obs, actions, lengths)
+    save_dataset(
+        path,
+        obs,
+        actions,
+        lengths,
+        positions=positions,
+        occlusion_width=occ_width,
+        occlusion_x=occ_x,
+    )
     logger.info(
         "Saved dataset: %s (%d episodes, max_len=%d)",
         path,
@@ -414,7 +464,7 @@ class DatasetStats:
 
 def build_dataset(config: Config) -> RSSMDataset:
     """Load episodes from disk and build the chunk dataset."""
-    observations, actions, lengths = load_dataset(config.data_path)
+    observations, actions, lengths, _ = load_dataset(config.data_path)
     return RSSMDataset(
         observations=observations,
         actions=actions,

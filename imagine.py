@@ -232,7 +232,7 @@ def main() -> None:
 
     model, config = load_model(args.checkpoint, device)
     data_path = args.data_path or config.data_path
-    observations, actions, lengths = load_dataset(data_path)
+    observations, actions, lengths, _ = load_dataset(data_path)
 
     ep_idx = args.episode_idx
     ctx_len = args.context_len

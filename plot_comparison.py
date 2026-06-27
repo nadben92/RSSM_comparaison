@@ -48,7 +48,7 @@ def main() -> None:
     if len(args.labels) != len(args.checkpoints):
         raise ValueError("Number of --labels must match --checkpoints")
 
-    observations, actions, lengths = load_dataset(args.data_path)
+    observations, actions, lengths, _ = load_dataset(args.data_path)
     episode_indices = select_episode_indices(
         lengths,
         context_len=args.context_len,
