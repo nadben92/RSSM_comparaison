@@ -145,17 +145,18 @@ def collect_episodes(
         ``actions`` ``(N, T, action_dim)`` float32,
         ``lengths`` ``(N,)``.
     """
-    if env_name == "bouncing_ball":
+    if env_name in ("bouncing_ball", "bouncing_ball_no_action"):
         from bouncing_ball import BouncingBallConfig, collect_episodes as collect_ball
 
         if action_dim != 1:
             raise ValueError(
-                f"bouncing_ball requires action_dim=1 (+1 accel / -1 decel), got {action_dim}"
+                f"{env_name} requires action_dim=1, got {action_dim}"
             )
         cfg = BouncingBallConfig(
             img_size=img_size,
             ball_radius=ball_radius,
             action_dim=action_dim,
+            zero_actions=(env_name == "bouncing_ball_no_action"),
         )
         return collect_ball(num_episodes, max_steps, seed=seed, cfg=cfg)
 

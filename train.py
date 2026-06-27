@@ -78,8 +78,8 @@ def parse_args() -> argparse.Namespace:
         "--backbone",
         type=str,
         default="gru",
-        choices=["gru", "lstm"],
-        help="Temporal backbone: gru (default) or lstm",
+        choices=["gru", "lstm", "transformer"],
+        help="Temporal backbone: gru (default), lstm, or transformer",
     )
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     parser.add_argument("--checkpoint-every", type=int, default=10)

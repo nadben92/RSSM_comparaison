@@ -12,6 +12,7 @@ import torch
 
 from config import Config
 from data import load_dataset
+from models.backbone import build_backbone
 from models.rssm import RSSM
 from utils import ensure_dir, get_device, reparameterize, set_seed, setup_logging
 
@@ -20,7 +21,7 @@ def load_model(checkpoint_path: str, device: torch.device) -> tuple[RSSM, Config
     """Load RSSM weights from a training checkpoint."""
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     config: Config = ckpt["config"]
-    model = RSSM(config).to(device)
+    model = RSSM(config, backbone=build_backbone(config)).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
     return model, config
@@ -153,6 +154,35 @@ def parse_args() -> argparse.Namespace:
         help="Offset into the episode where context begins (default: 0)",
     )
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--data-path",
+        type=str,
+        default=None,
+        help="Override dataset path (default: from checkpoint config)",
+    )
+    parser.add_argument(
+        "--n-episodes",
+        type=int,
+        default=30,
+        help="Episodes for position-error curve (same context/horizon as GIF)",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.2,
+        help="Ball detection threshold for position-error curve",
+    )
+    parser.add_argument(
+        "--label",
+        type=str,
+        default=None,
+        help="Legend label on position-error plot (default: checkpoint stem)",
+    )
+    parser.add_argument(
+        "--skip-error-curve",
+        action="store_true",
+        help="Skip position-error vs horizon plot",
+    )
     return parser.parse_args()
 
 
@@ -163,7 +193,8 @@ def main() -> None:
     device = get_device()
 
     model, config = load_model(args.checkpoint, device)
-    observations, actions, lengths = load_dataset(config.data_path)
+    data_path = args.data_path or config.data_path
+    observations, actions, lengths = load_dataset(data_path)
 
     ep_idx = args.episode_idx
     ctx_len = args.context_len
@@ -203,6 +234,7 @@ def main() -> None:
     suffix = f"_s{start_frame}" if start_frame > 0 else ""
     gif_path = out_dir / f"imagine_ep{ep_idx}{suffix}.gif"
     kl_path = out_dir / f"kl_per_dim_ep{ep_idx}{suffix}.png"
+    error_path = out_dir / f"position_error_ep{ep_idx}{suffix}.png"
 
     save_comparison_gif(
         real_ctx.squeeze(0),
@@ -210,6 +242,36 @@ def main() -> None:
         gif_path,
     )
     save_kl_per_dim_plot(output.kl_per_dim, kl_path, free_nats=config.free_nats)
+
+    if not args.skip_error_curve:
+        from evaluation import plot_error_curves, position_error_curve, select_episode_indices
+
+        label = args.label or Path(args.checkpoint).stem
+        episode_indices = select_episode_indices(
+            lengths,
+            context_len=ctx_len,
+            horizon=horizon,
+            n_episodes=args.n_episodes,
+            start_frame=start_frame,
+        )
+        result = position_error_curve(
+            model,
+            observations,
+            actions,
+            lengths,
+            episode_indices,
+            context_len=ctx_len,
+            horizon=horizon,
+            device=device,
+            threshold=args.threshold,
+            start_frame=start_frame,
+        )
+        plot_error_curves(
+            {label: (result.mean_error, result.std_error)},
+            error_path,
+            title=f"Ball position error (n={len(episode_indices)} episodes)",
+        )
+        logger.info("Saved position-error plot: %s", error_path)
 
     logger.info("Episode %d | start_frame=%d | context_len=%d | horizon=%d", ep_idx, start_frame, ctx_len, horizon)
     logger.info("Saved comparison GIF: %s", gif_path)

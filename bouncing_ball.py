@@ -1,8 +1,8 @@
 """Synthetic bouncing-ball episodes (numpy only, no Gymnasium).
 
-Billiard-style world in a square: elastic wall bounces plus scalar actions.
-``action_dim=1``: ``+1`` accelerates along velocity, ``-1`` decelerates along velocity.
-During collection, each step samples ``+1`` or ``-1`` uniformly at random.
+Billiard-style world in a square: elastic wall bounces plus optional scalar actions.
+``action_dim=1``: ``+1`` accelerates along velocity, ``-1`` decelerates (random per step).
+Set ``zero_actions=True`` for pure free physics with actions stored as ``0``.
 
 Generates the same on-disk layout as ``data.collect_episodes`` (uint8 obs on disk,
 normalized to float32 when loaded via ``data.load_dataset``).
@@ -28,7 +28,8 @@ class BouncingBallConfig:
     img_size: int = 32
     ball_radius: int = 7  # r=5→~8%, r=7→~15%, r=8→~19% on 32x32
     initial_speed: float = 2.5
-    action_dim: int = 1  # +1 accel / -1 decel along velocity
+    action_dim: int = 1  # +1 accel / -1 decel along velocity (or 0 if zero_actions)
+    zero_actions: bool = False  # True = no force; actions recorded as 0
     action_scale: float = 0.2  # Δ|v| per step when action=±1
     max_speed: float = 6.0
     bg_color: tuple[int, int, int] = (0, 0, 0)
@@ -100,7 +101,9 @@ def _sample_initial_state(
 
 
 def _sample_action(rng: np.random.Generator, cfg: BouncingBallConfig) -> np.ndarray:
-    """Sample ``+1`` (accelerate) or ``-1`` (decelerate) along velocity."""
+    """Sample action for one step: 0 (free physics) or random ±1 throttle."""
+    if cfg.zero_actions:
+        return np.zeros(cfg.action_dim, dtype=np.float32)
     value = float(rng.choice([-1.0, 1.0]))
     return np.array([value], dtype=np.float32)
 
@@ -163,10 +166,10 @@ def roll_out_episode(
     rng: np.random.Generator,
     cfg: BouncingBallConfig,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Simulate one episode with random ±1 throttle actions.
+    """Simulate one episode.
 
     ``obs[t]`` is the frame after step ``t``; ``actions[t]`` is the throttle
-    applied before that step.
+    applied before that step (0 if ``zero_actions``, else ``{-1, +1}``).
 
     Returns:
         observations ``(T, C, H, W)`` uint8,

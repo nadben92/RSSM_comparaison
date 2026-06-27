@@ -18,7 +18,14 @@ class Config:
     latent_dim: int = 32
     hidden_dim: int = 200
     action_dim: int = 1  # bouncing_ball: +1 accel / -1 decel along velocity
-    backbone: str = "gru"  # gru | lstm
+    backbone: str = "gru"  # gru | lstm | transformer
+
+    # Transformer backbone (used when backbone="transformer")
+    transformer_num_layers: int = 2
+    transformer_num_heads: int = 4
+    transformer_d_model: int = 0  # 0 = use hidden_dim
+    transformer_ff_dim: int = 0  # 0 = 4 * d_model
+    transformer_max_len: int = 64  # max positions for learned positional encoding
 
     # CNN architecture
     encoder_channels: tuple[int, int, int] = (32, 64, 128)
@@ -48,6 +55,8 @@ class Config:
     crop_ratio: float = 1.0  # unused for bouncing_ball; 1.0 = no crop for Gym envs
     ball_radius: int = 7  # ~15% disk area on 32x32 (use preview to tune)
     data_path: str = "data/bouncing_ball.npz"
+    # Free physics (zero action): env_name="bouncing_ball_no_action",
+    # data_path="data/bouncing_ball_no_action.npz"
 
     # Checkpointing & logging
     checkpoint_dir: str = "checkpoints"
