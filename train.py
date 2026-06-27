@@ -17,7 +17,12 @@ from utils import current_beta, ensure_dir, get_device, set_seed, setup_logging
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train RSSM world model")
-    parser.add_argument("--env-name", type=str, default="bouncing_ball")
+    parser.add_argument(
+        "--env-name",
+        type=str,
+        default="bouncing_ball",
+        help="bouncing_ball | bouncing_ball_obstacles | Gymnasium env id",
+    )
     parser.add_argument("--num-episodes", type=int, default=200)
     parser.add_argument("--max-steps", type=int, default=200)
     parser.add_argument("--epochs", type=int, default=50)
@@ -66,7 +71,7 @@ def parse_args() -> argparse.Namespace:
         "--ball-radius",
         type=int,
         default=7,
-        help="Ball radius in pixels for env_name=bouncing_ball (~15%% area at r=7 on 32x32)",
+        help="Ball radius for bouncing_ball envs (~15%% at r=7; use r=5 for obstacles variant)",
     )
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     parser.add_argument("--checkpoint-every", type=int, default=10)

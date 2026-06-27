@@ -47,6 +47,8 @@ class Config:
     crop_ratio: float = 1.0  # unused for bouncing_ball; 1.0 = no crop for Gym envs
     ball_radius: int = 7  # ~15% disk area on 32x32 (use preview to tune)
     data_path: str = "data/bouncing_ball.npz"
+    # Obstacles variant: env_name="bouncing_ball_obstacles",
+    # data_path="data/bouncing_ball_obstacles.npz", ball_radius=5
 
     # Checkpointing & logging
     checkpoint_dir: str = "checkpoints"

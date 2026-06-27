@@ -151,6 +151,66 @@ Outputs in `outputs/`:
 - `imagine_ep0.gif` — side-by-side: real context (left) vs imagined rollout (right)
 - `kl_per_dim_ep0.png` — bar chart of KL per latent dimension
 
+### Bouncing ball (base)
+
+Pure elastic physics, zero actions, ball `r=7` (~15% of 32×32):
+
+```bash
+python train.py \
+  --force-collect \
+  --env-name bouncing_ball \
+  --data-path data/bouncing_ball.npz \
+  --ball-radius 7 \
+  --num-episodes 500 \
+  --max-steps 200 \
+  --epochs 50 \
+  --seq-len 25 \
+  --batch-size 128 \
+  --lambda-motion 5 \
+  --kl-balance 0.8 \
+  --no-wandb
+```
+
+Preview GIF: `python -c "from bouncing_ball import BouncingBallConfig, save_episode_gif; save_episode_gif('outputs/bouncing_ball_elastic.gif', cfg=BouncingBallConfig(ball_radius=7, action_dim=1))"`
+
+### Bouncing ball + obstacles (harder variant)
+
+Smaller ball (`r=5`), 4 random circular obstacles per episode, same zero-action physics. **Separate dataset** — does not overwrite `data/bouncing_ball.npz`.
+
+```bash
+python train.py \
+  --force-collect \
+  --env-name bouncing_ball_obstacles \
+  --data-path data/bouncing_ball_obstacles.npz \
+  --ball-radius 5 \
+  --num-episodes 500 \
+  --max-steps 200 \
+  --epochs 50 \
+  --seq-len 25 \
+  --batch-size 128 \
+  --lambda-motion 5 \
+  --kl-balance 0.8 \
+  --no-wandb
+```
+
+Preview GIF:
+
+```bash
+python -c "
+from bouncing_ball import BouncingBallConfig, save_episode_gif
+cfg = BouncingBallConfig(ball_radius=5, action_dim=1, num_obstacles=4, obstacle_radius=2)
+save_episode_gif('outputs/bouncing_ball_obstacles.gif', episode_len=40, seed=42, cfg=cfg)
+"
+```
+
+Imagination on the obstacles checkpoint:
+
+```bash
+python imagine.py \
+  --checkpoint checkpoints/rssm_epoch050.pt \
+  --data-path data/bouncing_ball_obstacles.npz
+```
+
 ## Extending the backbone
 
 The temporal module implements `SequenceBackbone.step(h_prev, z_prev, a_prev) -> h_next`. To add a Transformer:
