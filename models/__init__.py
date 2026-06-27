@@ -1,6 +1,6 @@
 """RSSM model components."""
 
-from models.backbone import GRUBackbone, SequenceBackbone
+from models.backbone import GRUBackbone, LSTMBackbone, SequenceBackbone, build_backbone
 from models.decoder import CNNDecoder
 from models.encoder import CNNEncoder
 from models.rssm import RSSM, RSSMOutput
@@ -10,6 +10,8 @@ __all__ = [
     "CNNDecoder",
     "SequenceBackbone",
     "GRUBackbone",
+    "LSTMBackbone",
+    "build_backbone",
     "RSSM",
     "RSSMOutput",
 ]

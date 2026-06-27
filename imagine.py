@@ -48,7 +48,7 @@ def imagine_rollout(
         ``real_frames`` ``(B, T_ctx, C, H, W)`` and
         ``imagined_frames`` ``(B, H, C, H, W)``.
     """
-    h, z = model.encode_context(context_obs, context_actions)
+    state, z = model.encode_context(context_obs, context_actions)
     # Last context action becomes a_{t-1} for the first imagination step
     a_prev = context_actions[:, -1]
 
@@ -57,7 +57,8 @@ def imagine_rollout(
 
     for t in range(horizon):
         # Same temporal order as training: backbone first, then prior
-        h = model.backbone.step(h, z, a_prev)
+        state = model.backbone.step(state, z, a_prev)
+        h = model.backbone.hidden(state)
         mu_p, sigma_p = model.prior(h)
         z = reparameterize(mu_p, sigma_p)
         recon = model.decoder(h, z)

@@ -9,7 +9,7 @@ import torch.nn as nn
 from torch.distributions import Normal, kl_divergence
 
 from config import Config
-from models.backbone import GRUBackbone, SequenceBackbone
+from models.backbone import BackboneState, SequenceBackbone, build_backbone
 from models.decoder import CNNDecoder
 from models.encoder import CNNEncoder
 from utils import reparameterize
@@ -52,7 +52,7 @@ class RSSM(nn.Module):
     """Recurrent State-Space Model in the DreamerV1/V2 spirit.
 
     Temporal order at each step t (CRITICAL — do not reorder):
-        1. h_t = backbone(h_{t-1}, z_{t-1}, a_{t-1})
+        1. state_t = backbone.step(state_{t-1}, z_{t-1}, a_{t-1}); h_t = hidden(state_t)
         2. prior:  p(z_t | h_t)
         3. e_t = encoder(o_t)
         4. posterior: q(z_t | h_t, e_t)
@@ -65,7 +65,7 @@ class RSSM(nn.Module):
         self.config = config
         self.encoder = CNNEncoder(config)
         self.decoder = CNNDecoder(config)
-        self.backbone: SequenceBackbone = backbone or GRUBackbone(config)
+        self.backbone: SequenceBackbone = backbone or build_backbone(config)
 
         self.prior = GaussianHead(config.hidden_dim, config.latent_dim)
         self.posterior = GaussianHead(
@@ -75,28 +75,29 @@ class RSSM(nn.Module):
 
     def _init_states(
         self, batch_size: int, device: torch.device
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Zero-initialize h, z, and the previous action."""
-        h = self.backbone.init_state(batch_size, device)
+    ) -> tuple[BackboneState, torch.Tensor, torch.Tensor]:
+        """Zero-initialize backbone state, z, and the previous action."""
+        state = self.backbone.init_state(batch_size, device)
         z = torch.zeros(batch_size, self.config.latent_dim, device=device)
         a_prev = torch.zeros(batch_size, self.config.action_dim, device=device)
-        return h, z, a_prev
+        return state, z, a_prev
 
     def forward_step(
         self,
-        h_prev: torch.Tensor,
+        state_prev: BackboneState,
         z_prev: torch.Tensor,
         a_prev: torch.Tensor,
         obs: torch.Tensor,
         sample: bool = True,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
+    ) -> tuple[BackboneState, torch.Tensor, torch.Tensor, dict[str, torch.Tensor]]:
         """Single RSSM step following the prescribed temporal order.
 
         Returns:
-            h_t, z_t, recon, and a dict of intermediate tensors for diagnostics.
+            backbone state, z_t, recon, and a dict of intermediate tensors.
         """
         # 1. Update deterministic memory BEFORE seeing the observation
-        h = self.backbone.step(h_prev, z_prev, a_prev)
+        state = self.backbone.step(state_prev, z_prev, a_prev)
+        h = self.backbone.hidden(state)
 
         # 2. Prior predicts z without the image
         mu_p, sigma_p = self.prior(h)
@@ -121,8 +122,10 @@ class RSSM(nn.Module):
             "sigma_p": sigma_p,
             "mu_q": mu_q,
             "sigma_q": sigma_q,
+            "h": h,
+            "state": state,
         }
-        return h, z, recon, extras
+        return state, z, recon, extras
 
     def forward(
         self,
@@ -143,7 +146,7 @@ class RSSM(nn.Module):
         batch_size, seq_len = obs_seq.shape[:2]
         device = obs_seq.device
 
-        h, z, a_prev = self._init_states(batch_size, device)
+        state, z, a_prev = self._init_states(batch_size, device)
 
         recons: list[torch.Tensor] = []
         kl_raw_list: list[torch.Tensor] = []
@@ -155,7 +158,7 @@ class RSSM(nn.Module):
             obs_t = obs_seq[:, t]
             a_t = action_seq[:, t]
 
-            h, z, recon, extras = self.forward_step(h, z, a_prev, obs_t, sample=True)
+            state, z, recon, extras = self.forward_step(state, z, a_prev, obs_t, sample=True)
             recons.append(recon)
 
             mu_q, sigma_q = extras["mu_q"], extras["sigma_q"]
@@ -209,45 +212,46 @@ class RSSM(nn.Module):
         self,
         obs_seq: torch.Tensor,
         action_seq: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Bootstrap h and z from real context frames via the posterior.
+    ) -> tuple[BackboneState, torch.Tensor]:
+        """Bootstrap backbone state and z from real context frames via the posterior.
 
         Args:
             obs_seq: ``(B, T_ctx, C, H, W)``.
             action_seq: ``(B, T_ctx, action_dim)``.
 
         Returns:
-            Final ``(h, z)`` after processing all context frames.
+            Final ``(backbone_state, z)`` after processing all context frames.
         """
         batch_size, seq_len = obs_seq.shape[:2]
         device = obs_seq.device
-        h, z, a_prev = self._init_states(batch_size, device)
+        state, z, a_prev = self._init_states(batch_size, device)
 
         for t in range(seq_len):
-            h, z, _, _ = self.forward_step(
-                h, z, a_prev, obs_seq[:, t], sample=False
+            state, z, _, _ = self.forward_step(
+                state, z, a_prev, obs_seq[:, t], sample=False
             )
             a_prev = action_seq[:, t]
 
-        return h, z
+        return state, z
 
     @torch.no_grad()
     def imagine_step(
         self,
-        h: torch.Tensor,
+        state: BackboneState,
         z: torch.Tensor,
         action: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[BackboneState, torch.Tensor, torch.Tensor]:
         """One open-loop imagination step using ONLY the prior.
 
         Follows the same backbone-first ordering as training, but z is sampled
         from p(z|h) instead of q(z|h,e).
 
         Returns:
-            h_next, z_sampled, decoded_image
+            next backbone state, z_sampled, decoded_image
         """
-        h_next = self.backbone.step(h, z, action)
+        state_next = self.backbone.step(state, z, action)
+        h_next = self.backbone.hidden(state_next)
         mu_p, sigma_p = self.prior(h_next)
         z_next = reparameterize(mu_p, sigma_p)
         recon = self.decoder(h_next, z_next)
-        return h_next, z_next, recon
+        return state_next, z_next, recon

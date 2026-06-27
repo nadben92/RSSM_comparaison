@@ -18,6 +18,7 @@ class Config:
     latent_dim: int = 32
     hidden_dim: int = 200
     action_dim: int = 1  # bouncing_ball: +1 accel / -1 decel along velocity
+    backbone: str = "gru"  # gru | lstm
 
     # CNN architecture
     encoder_channels: tuple[int, int, int] = (32, 64, 128)

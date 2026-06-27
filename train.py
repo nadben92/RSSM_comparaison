@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from config import Config
 from data import DatasetStats, build_dataloader, collect_and_save
+from models.backbone import build_backbone
 from models.rssm import RSSM
 from utils import current_beta, ensure_dir, get_device, set_seed, setup_logging
 
@@ -73,6 +74,13 @@ def parse_args() -> argparse.Namespace:
         default=7,
         help="Ball radius for bouncing_ball envs (~15%% at r=7 on 32x32)",
     )
+    parser.add_argument(
+        "--backbone",
+        type=str,
+        default="gru",
+        choices=["gru", "lstm"],
+        help="Temporal backbone: gru (default) or lstm",
+    )
     parser.add_argument("--checkpoint-dir", type=str, default="checkpoints")
     parser.add_argument("--checkpoint-every", type=int, default=10)
     parser.add_argument("--log-every", type=int, default=50)
@@ -105,6 +113,7 @@ def config_from_args(args: argparse.Namespace) -> Config:
         data_path=args.data_path,
         crop_ratio=args.crop_ratio,
         ball_radius=args.ball_radius,
+        backbone=args.backbone,
         checkpoint_dir=args.checkpoint_dir,
         checkpoint_every=args.checkpoint_every,
         log_every=args.log_every,
@@ -119,6 +128,19 @@ def resolve_anneal_steps(config: Config, stats: DatasetStats) -> int:
     if config.anneal_steps > 0:
         return config.anneal_steps
     return max(1, int(stats.total_steps * config.anneal_fraction))
+
+
+def log_model_params(model: RSSM, config: Config) -> None:
+    """Log backbone and total parameter counts for fair architecture comparison."""
+    logger = setup_logging()
+    backbone_params = sum(p.numel() for p in model.backbone.parameters())
+    total_params = sum(p.numel() for p in model.parameters())
+    logger.info(
+        "Model params | backbone=%s | backbone_params=%d | total_params=%d",
+        config.backbone,
+        backbone_params,
+        total_params,
+    )
 
 
 def log_training_plan(
@@ -204,7 +226,9 @@ def train(config: Config, force_collect: bool = False) -> None:
     anneal_steps = resolve_anneal_steps(config, stats)
     log_training_plan(config, stats, anneal_steps)
 
-    model = RSSM(config).to(device)
+    backbone = build_backbone(config)
+    model = RSSM(config, backbone=backbone).to(device)
+    log_model_params(model, config)
     optimizer = Adam(model.parameters(), lr=config.lr)
 
     wandb_run = None
