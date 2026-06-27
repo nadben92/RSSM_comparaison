@@ -140,6 +140,44 @@ def save_kl_per_dim_plot(
     plt.close(fig)
 
 
+def mean_kl_per_dim(
+    model: RSSM,
+    obs_seq: torch.Tensor,
+    action_seq: torch.Tensor,
+    free_nats: float,
+) -> np.ndarray:
+    """Return mean KL per latent dimension averaged over batch and time."""
+    with torch.no_grad():
+        output = model(obs_seq, action_seq, free_nats=free_nats)
+    return output.kl_per_dim.mean(dim=(0, 1)).cpu().numpy()
+
+
+def plot_kl_per_dim_comparison(
+    kl_by_label: dict[str, np.ndarray],
+    output_path: str | Path,
+    free_nats: float = 0.0,
+) -> Path:
+    """Overlay mean KL-per-dimension curves for multiple backbones."""
+    fig, ax = plt.subplots(figsize=(10, 4))
+    for label, mean_kl in kl_by_label.items():
+        dims = np.arange(len(mean_kl))
+        ax.plot(dims, mean_kl, linewidth=2, marker="o", markersize=3, label=label)
+
+    if free_nats > 0:
+        ax.axhline(free_nats, color="crimson", linestyle="--", label=f"free_nats={free_nats}")
+    ax.set_xlabel("Latent dimension")
+    ax.set_ylabel("Mean KL (nats)")
+    ax.set_title("KL per latent dimension (comparison)")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    out = ensure_dir(Path(output_path).parent) / Path(output_path).name
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    return out
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="RSSM imagination rollout")
     parser.add_argument("--checkpoint", type=str, required=True)

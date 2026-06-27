@@ -167,8 +167,9 @@ def plot_error_curves(
     title: str = "Ball position error vs imagination horizon",
     xlabel: str = "Imagination step",
     ylabel: str = "Position error (pixels)",
+    show_std: bool = True,
 ) -> Path:
-    """Plot mean ± std error curves for one or more backbones on the same axes."""
+    """Plot mean error curves for one or more backbones on the same axes."""
     fig, ax = plt.subplots(figsize=(8, 5))
     horizons = None
 
@@ -178,7 +179,8 @@ def plot_error_curves(
         x = np.arange(1, len(mean) + 1)
         horizons = x
         ax.plot(x, mean, linewidth=2, label=label)
-        ax.fill_between(x, mean - std, mean + std, alpha=0.2)
+        if show_std:
+            ax.fill_between(x, mean - std, mean + std, alpha=0.2)
 
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
@@ -250,6 +252,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--start-frame", type=int, default=0)
     parser.add_argument("--threshold", type=float, default=0.2, help="Ball detection threshold")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--no-std",
+        action="store_true",
+        help="Plot mean curves only (no shaded std bands)",
+    )
+    parser.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help="Output PNG filename (default: position_error_curves.png)",
+    )
     parser.add_argument(
         "--debug-position",
         action="store_true",
@@ -364,8 +377,8 @@ def main() -> None:
             100.0 * valid_frac,
         )
 
-    plot_path = out_dir / "position_error_curves.png"
-    plot_error_curves(curves, plot_path)
+    plot_path = out_dir / (args.output or "position_error_curves.png")
+    plot_error_curves(curves, plot_path, show_std=not args.no_std)
     logger.info("Saved comparison plot: %s", plot_path)
 
     npz_path = out_dir / "position_error_data.npz"
