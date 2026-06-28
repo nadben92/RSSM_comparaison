@@ -52,9 +52,44 @@ def normalize_frame(frame: np.ndarray) -> np.ndarray:
     return np.clip(arr, 0.0, 1.0)
 
 
+def occlusion_band_x0(occlusion_width: int, occlusion_x: int, img_size: int) -> int:
+    """Left edge of the occlusion band (matches ``bouncing_ball.occlusion_rect``)."""
+    if occlusion_width <= 0:
+        return 0
+    return occlusion_x if occlusion_x > 0 else (img_size - occlusion_width) // 2
+
+
+def ignore_occlusion_band(
+    chw: np.ndarray,
+    occlusion_width: int,
+    occlusion_x: int,
+    img_size: int,
+) -> np.ndarray:
+    """Return a copy where fixed obstacle pixels are replaced by background.
+
+    Red ball pixels inside the band are kept so an imagined ball can still be
+    detected. Used only for error-curve metrics — not for rendering or GIFs.
+    """
+    if occlusion_width <= 0:
+        return chw
+    out = chw.copy()
+    x0 = occlusion_band_x0(occlusion_width, occlusion_x, img_size)
+    x1 = min(img_size, x0 + occlusion_width)
+    band = out[:, :, x0:x1]
+    r, g = band[0], band[1]
+    ball_mask = (r > 0.25) & (r > g)
+    for c in range(3):
+        band[c] = np.where(ball_mask, band[c], 0.0)
+    out[:, :, x0:x1] = band
+    return out
+
+
 def ball_position(
     frame: np.ndarray,
     threshold: float = 0.2,
+    occlusion_width: int = 0,
+    occlusion_x: int = 0,
+    img_size: int = 32,
 ) -> tuple[float, float] | None:
     """Extract ball center-of-mass from a single frame.
 
@@ -62,11 +97,15 @@ def ball_position(
         frame: ``(C, H, W)`` float in ``[0, 1]`` (uint8 is normalized first).
         threshold: Max per-pixel channel deviation from background median required
             to count as ball pixel.
+        occlusion_width: If > 0, obstacle band pixels are ignored (Part 2 metrics).
+        occlusion_x: Band left edge; 0 = auto-center on ``img_size``.
 
     Returns:
         ``(x, y)`` in pixel coordinates, or ``None`` if no ball pixel is detected.
     """
     chw = normalize_frame(frame)
+    if occlusion_width > 0:
+        chw = ignore_occlusion_band(chw, occlusion_width, occlusion_x, img_size)
     bg = np.median(chw, axis=(1, 2), keepdims=True)
     diff = np.abs(chw - bg).max(axis=0)
     mask = diff > threshold
@@ -93,9 +132,18 @@ def position_error_vs_gt(
     imagined_frame: np.ndarray,
     gt_pos: np.ndarray,
     threshold: float = 0.2,
+    occlusion_width: int = 0,
+    occlusion_x: int = 0,
+    img_size: int = 32,
 ) -> float:
     """Error between imagined ball (pixel extraction) and ground-truth position."""
-    imagined_pos = ball_position(imagined_frame, threshold=threshold)
+    imagined_pos = ball_position(
+        imagined_frame,
+        threshold=threshold,
+        occlusion_width=occlusion_width,
+        occlusion_x=occlusion_x,
+        img_size=img_size,
+    )
     if imagined_pos is None:
         return float("nan")
     return float(np.hypot(imagined_pos[0] - gt_pos[0], imagined_pos[1] - gt_pos[1]))
@@ -206,7 +254,12 @@ def position_error_curve(
         for t in range(horizon):
             if gt_positions is not None:
                 raw_errors[row, t] = position_error_vs_gt(
-                    imagined_np[t], gt_positions[t], threshold=threshold
+                    imagined_np[t],
+                    gt_positions[t],
+                    threshold=threshold,
+                    occlusion_width=occlusion_width,
+                    occlusion_x=occlusion_x,
+                    img_size=img_size,
                 )
             else:
                 raw_errors[row, t] = position_distance_pixels(
@@ -499,10 +552,9 @@ def main() -> None:
             f"valid detections: {100.0 * valid_frac:.1f}%"
         )
         if result.mean_error_occluded is not None:
-            msg += (
-                f" | occluded: {result.mean_error_occluded:.2f} px"
-                f" | visible: {result.mean_error_visible:.2f} px"
-            )
+            msg += f" | occluded: {result.mean_error_occluded:.2f} px"
+        if result.mean_error_visible is not None:
+            msg += f" | visible: {result.mean_error_visible:.2f} px"
         logger.info(msg)
 
     plot_path = out_dir / (args.output or "position_error_curves.png")
