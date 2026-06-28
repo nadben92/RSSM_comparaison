@@ -75,7 +75,18 @@ def is_ball_occluded(pos: np.ndarray, cfg: BouncingBallConfig) -> bool:
         return False
     x0, x1, _, _ = rect
     cx = float(pos[0])
-    return x0 <= cx <= x1
+    return x0 <= cx < x1
+
+
+def is_ball_fully_hidden(pos: np.ndarray, cfg: BouncingBallConfig) -> bool:
+    """True when the entire ball disk is behind the occlusion band (zero visible pixels)."""
+    rect = occlusion_rect(cfg)
+    if rect is None:
+        return False
+    x0, x1, _, _ = rect
+    cx = float(pos[0])
+    r = cfg.ball_radius
+    return (cx - r) >= x0 and (cx + r) < x1
 
 
 def _draw_disk(
@@ -389,7 +400,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episode-len", type=int, default=40)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--ball-radius", type=int, default=7)
-    parser.add_argument("--occlusion-width", type=int, default=0, help="0 = disabled (Part 1)")
+    parser.add_argument("--occlusion-width", type=int, default=17, help="0 = disabled (Part 1)")
     parser.add_argument("--occlusion-x", type=int, default=0, help="Band left edge; 0 = auto-center")
     parser.add_argument("--save-gif", type=str, default=None)
     parser.add_argument("--save-grid", type=str, default=None)

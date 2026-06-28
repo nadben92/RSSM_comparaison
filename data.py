@@ -157,7 +157,7 @@ def collect_episodes(
             )
         occ_width = occlusion_width
         if env_name == "bouncing_ball_occlusion" and occ_width <= 0:
-            occ_width = 6  # ~19% of 32px canvas; ball crosses regularly
+            occ_width = 17  # Part 2 default (~2-4 fully hidden frames per crossing)
         cfg = BouncingBallConfig(
             img_size=img_size,
             ball_radius=ball_radius,
@@ -359,7 +359,7 @@ def collect_and_save(config: Config, force: bool = False) -> str:
     occ_width = config.occlusion_width
     occ_x = config.occlusion_x
     if config.env_name == "bouncing_ball_occlusion" and occ_width <= 0:
-        occ_width = 6
+        occ_width = 17
 
     obs, actions, lengths, positions = collect_episodes(
         env_name=config.env_name,

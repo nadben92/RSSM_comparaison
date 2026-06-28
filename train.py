@@ -77,8 +77,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--occlusion-width",
         type=int,
-        default=0,
-        help="Occlusion band width in pixels (0=disabled; Part 2 memory task)",
+        default=17,
+        help="Occlusion band width in pixels (0=disabled; Part 2 default=17)",
     )
     parser.add_argument(
         "--occlusion-x",

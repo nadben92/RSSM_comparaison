@@ -154,21 +154,31 @@ def positions_occluded(
     occlusion_width: int,
     occlusion_x: int,
     img_size: int,
-    ball_radius: int,
+    ball_radius: int = 7,
 ) -> np.ndarray:
-    """Boolean mask ``(T,)`` — True when the ball overlaps the occlusion band."""
+    """Boolean mask ``(T,)`` — True when ball center x is inside the occlusion band."""
     if occlusion_width <= 0:
         return np.zeros(len(positions), dtype=bool)
-    from bouncing_ball import BouncingBallConfig, is_ball_occluded
+    x0 = occlusion_band_x0(occlusion_width, occlusion_x, img_size)
+    x1 = min(img_size, x0 + occlusion_width)
+    xs = positions[:, 0].astype(np.float64)
+    return (xs >= x0) & (xs < x1)
 
-    x0 = occlusion_x if occlusion_x > 0 else (img_size - occlusion_width) // 2
-    cfg = BouncingBallConfig(
-        img_size=img_size,
-        ball_radius=ball_radius,
-        occlusion_width=occlusion_width,
-        occlusion_x=x0,
-    )
-    return np.array([is_ball_occluded(positions[t], cfg) for t in range(len(positions))])
+
+def positions_fully_hidden(
+    positions: np.ndarray,
+    occlusion_width: int,
+    occlusion_x: int,
+    img_size: int,
+    ball_radius: int = 7,
+) -> np.ndarray:
+    """Boolean mask ``(T,)`` — True when the entire ball disk is behind the band."""
+    if occlusion_width <= 0:
+        return np.zeros(len(positions), dtype=bool)
+    x0 = occlusion_band_x0(occlusion_width, occlusion_x, img_size)
+    x1 = min(img_size, x0 + occlusion_width)
+    xs = positions[:, 0].astype(np.float64)
+    return (xs - ball_radius >= x0) & (xs + ball_radius < x1)
 
 
 def select_episode_indices(
@@ -294,22 +304,23 @@ def _shade_occlusion_regions(
     ax: plt.Axes,
     occluded_mask: np.ndarray,
     *,
-    threshold: float = 0.5,
+    max_alpha: float = 0.35,
 ) -> None:
-    """Grey vertical bands on the plot where imagination steps are often occluded."""
-    in_band = False
-    start = 1
-    for i, frac in enumerate(occluded_mask):
+    """Shade horizon steps where the ball is behind the band.
+
+    ``occluded_mask[t]`` is the fraction of evaluation episodes whose ground-truth
+    ball center lies in the occlusion band at imagination step ``t+1``. Each step
+    gets its own narrow span with grey intensity proportional to that fraction,
+    so variable crossing times across episodes appear as localized grey peaks
+    rather than one block covering the whole axis.
+    """
+    fracs = np.asarray(occluded_mask, dtype=np.float64)
+    for i, frac in enumerate(fracs):
+        if frac <= 0:
+            continue
         step = i + 1
-        is_occ = frac >= threshold
-        if is_occ and not in_band:
-            start = step
-            in_band = True
-        elif not is_occ and in_band:
-            ax.axvspan(start - 0.5, step - 0.5, color="grey", alpha=0.15, zorder=0)
-            in_band = False
-    if in_band:
-        ax.axvspan(start - 0.5, len(occluded_mask) + 0.5, color="grey", alpha=0.15, zorder=0)
+        alpha = min(max_alpha, 0.04 + 0.36 * frac)
+        ax.axvspan(step - 0.5, step + 0.5, color="grey", alpha=alpha, zorder=0)
 
 
 def plot_error_curves(
@@ -338,17 +349,19 @@ def plot_error_curves(
         if show_std:
             ax.fill_between(x, mean - std, mean + std, alpha=0.2)
 
-    if occluded_mask is not None and np.any(occluded_mask >= 0.5):
+    if occluded_mask is not None and np.any(occluded_mask > 0):
         import matplotlib.patches as mpatches
 
         handles, labels = ax.get_legend_handles_labels()
-        handles.append(mpatches.Patch(color="grey", alpha=0.15, label="occlusion zone"))
+        handles.append(
+            mpatches.Patch(color="grey", alpha=0.25, label="occlusion (frac. episodes)")
+        )
         ax.legend(handles=handles)
 
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_title(title)
-    if not (occluded_mask is not None and np.any(occluded_mask >= 0.5)):
+    if not (occluded_mask is not None and np.any(occluded_mask > 0)):
         ax.legend()
     ax.grid(True, alpha=0.3)
     if horizons is not None and len(horizons) > 0:
