@@ -12,6 +12,12 @@ World models learn **dynamics** — how the world evolves — rather than static
 
 ### Part 1 — Simple bouncing ball (Markovian, no occlusion)
 
+<p align="center">
+  <img src="assets/imagine_gru.gif" alt="GRU open-loop imagination (no occlusion)" width="900"/>
+</p>
+
+Side-by-side real context vs. imagined rollout (GRU, no occlusion).
+
 Ball-position error vs. imagination horizon. Lower is better.
 
 ![Position error — GRU vs LSTM vs Transformer (no occlusion)](assets/position_error_all_backbones.png)
@@ -26,7 +32,9 @@ A vertical opaque band hides the ball for 2–4 frames; predicting reappearance 
 
 **All three backbones perform similarly during occlusion.** This is an honest result, not a failure: a 2–4 frame gap still fits within the short memory of an RNN. The Transformer’s theoretical advantage would likely appear only at much longer dependencies (tens to hundreds of steps). **On these difficulty scales, architectural complexity does not help.**
 
-![Imagination under occlusion (optional)](assets/imagine_occlusion.gif)
+<p align="center">
+  <img src="assets/imagine_occlusion.gif" alt="Imagination under occlusion" width="900"/>
+</p>
 
 ### Part 3 — Latent interpretability (without-occlusion models)
 
@@ -41,12 +49,6 @@ The latent **encodes dynamics**: active dimensions track the ball over time. **P
 **KL ≠ causality** — the strongest technical insight. `z[19]` has moderate KL but is the most critical under ablation; `z[26]` has high KL but is largely redundant (ablating it barely hurts). Encoding information and being causally necessary are different.
 
 Detailed analysis and reproduction: **[interpretability/README.md](interpretability/README.md)**
-
-### Demo — GRU imagination
-
-![GRU open-loop imagination](assets/imagine_gru.gif)
-
-Side-by-side real context vs. imagined rollout (GRU, no occlusion).
 
 ### Overall conclusion
 
