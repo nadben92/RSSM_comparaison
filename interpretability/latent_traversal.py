@@ -164,7 +164,12 @@ def run_traversal(args: argparse.Namespace) -> None:
             )
 
     mode_label = "temporal min/max" if args.range_mode == "temporal" else "posterior σ"
-    fig.suptitle(f"Latent traversal — {stem} ({mode_label})", fontsize=11)
+    fig.suptitle(
+        f"Latent traversal — {stem}\n"
+        f"Each row: one dimension z[i] varied ({mode_label}); "
+        f"columns: sweep values of z[i] (h and other dims fixed)",
+        fontsize=11,
+    )
     fig.tight_layout()
     grid_path = out_dir / f"latent_traversal_{stem}.png"
     fig.savefig(grid_path, dpi=150, bbox_inches="tight")
