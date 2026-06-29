@@ -4,9 +4,9 @@ A pixel-based **Recurrent State-Space Model (RSSM)** world model and a controlle
 
 ## Motivation
 
-World models learn **dynamics** — how the world evolves — rather than static correlations. Unlike LLMs trained on text redundancy, a visual world model must track a moving object over time and roll out futures in imagination. This repo asks: **on controlled pixel dynamics, does architectural complexity help?**
+World models learn **dynamics** — how the world evolves — rather than static correlations. Unlike LLMs trained on text redundancy, a visual world model must track a moving object over time and roll out futures in imagination. This repo asks: **on controlled pixel dynamics, and at a modest data/compute budget, does architectural complexity help?**
 
-> **Research question:** Which temporal backbone learns the best world model — and when (if ever) does a Transformer’s long-range memory pay off over a simple GRU?
+> **Research question:** Which temporal backbone learns the best world model — and when (if ever) does a Transformer's long-range memory pay off over a simple GRU?
 
 ## Key results
 
@@ -20,17 +20,21 @@ Side-by-side real context vs. imagined rollout (GRU, no occlusion).
 
 Ball-position error vs. imagination horizon. Lower is better.
 
-![Position error — GRU vs LSTM vs Transformer (no occlusion)](assets/position_error_all_backbones.png)
+<p align="center">
+  <img src="assets/position_error_all_backbones.png" alt="Position error — GRU vs LSTM vs Transformer (no occlusion)" width="900"/>
+</p>
 
-**GRU < LSTM < Transformer** — the GRU wins. The task is Markovian (current position and velocity suffice); no long-range memory is needed. The GRU’s simple recurrent inductive bias is an advantage; the Transformer pays for generality without benefit here. All three backbones learn a well-populated latent `z` (no collapse) — the gap is predictive accuracy, not representation failure.
+**GRU < LSTM < Transformer** — the GRU wins *at this data/compute budget*. The task is Markovian (current position and velocity suffice); no long-range memory is needed. The GRU's recurrent inductive bias is immediately useful, while the Transformer must learn temporal ordering and positional structure from scratch — a disadvantage when data is limited (see Limitations). All three backbones learn a well-populated latent `z` (no collapse) — the gap is predictive accuracy, not representation failure.
 
 ### Part 2 — Occlusion (short-term memory test)
 
-A vertical opaque band hides the ball for 2–4 frames; predicting reappearance requires remembering its trajectory.
+A vertical opaque band hides the ball for ~2–4 frames; predicting reappearance requires remembering its trajectory.
 
-![Position error under occlusion](assets/position_error_occlusion.png)
+<p align="center">
+  <img src="assets/position_error_occlusion.png" alt="Position error under occlusion" width="900"/>
+</p>
 
-**All three backbones perform similarly during occlusion.** This is an honest result, not a failure: a 2–4 frame gap still fits within the short memory of an RNN. The Transformer’s theoretical advantage would likely appear only at much longer dependencies (tens to hundreds of steps). **On these difficulty scales, architectural complexity does not help.**
+**All three backbones perform similarly during occlusion.** This is an honest result, not a failure — and it is *expected*: a 2–4 frame gap sits comfortably within the short memory of any RNN, so it does not exercise the long-range capability a Transformer would excel at. Distinguishing the architectures would require dependencies tens to hundreds of steps long (see Limitations). **On the difficulty scale tested here, architectural complexity does not help.**
 
 <p align="center">
   <img src="assets/imagine_occlusion.gif" alt="Imagination under occlusion" width="900"/>
@@ -40,19 +44,23 @@ A vertical opaque band hides the ball for 2–4 frames; predicting reappearance 
 
 Read-only analysis of the stochastic latent `z` on models that reconstruct well. Three axes: latent traversal, causal ablation, latent structure.
 
-![Latent traversal — ball displacement when varying z[i]](assets/latent_traversal.png)
+<p align="center">
+  <img src="assets/latent_traversal.png" alt="Latent traversal — ball displacement when varying z[i]" width="900"/>
+</p>
 
-The latent **encodes dynamics**: active dimensions track the ball over time. **Partial, distributed disentanglement** emerges — horizontal-dominant groups (`z[25]`, `z[19]`) and vertical-dominant groups (`z[5]`, `z[30]`), but spread across correlated dimensions, not clean single “x” or “y” axes.
+The latent **encodes dynamics**: active dimensions track the ball over time. **Partial, distributed disentanglement** emerges — horizontal-dominant groups (`z[25]`, `z[19]`) and vertical-dominant groups (`z[5]`, `z[30]`), but spread across correlated dimensions, not clean single "x" or "y" axes.
 
-![Causal importance vs KL per dimension](assets/ablation_vs_kl.png)
+<p align="center">
+  <img src="assets/ablation_vs_kl.png" alt="Causal importance vs KL per dimension" width="900"/>
+</p>
 
-**KL ≠ causality** — the strongest technical insight. `z[19]` has moderate KL but is the most critical under ablation; `z[26]` has high KL but is largely redundant (ablating it barely hurts). Encoding information and being causally necessary are different.
+**KL and causal importance measure different things.** KL per dimension reflects how hard the *prior* finds that variable to predict; causal importance (via ablation) reflects how much the *output* degrades when the dimension is removed. They do not coincide: `z[19]` has moderate KL but is the most critical under ablation, while `z[26]` has high KL yet is largely redundant (ablating it barely hurts). A dimension can carry information the prior struggles to anticipate without being causally necessary for reconstruction.
 
 Detailed analysis and reproduction: **[interpretability/README.md](interpretability/README.md)**
 
 ### Overall conclusion
 
-On simple visual dynamics, **architectural complexity (LSTM, Transformer) does not help — and can hurt**; the GRU is well matched to the task. Transformer advantages would likely require **much longer** temporal dependencies than tested here. The learned latent is **partially interpretable** (emergent x/y structure, distributed across dimensions), and **causal importance of a dimension is not reducible to how much information it encodes**.
+Within the tested regime — a simple, deterministic environment at a modest data/compute budget — **architectural complexity (LSTM, Transformer) does not help and can hurt**; the GRU is well matched to the task. Transformer advantages would likely require **much longer** temporal dependencies and **more data** than used here. The learned latent is **partially interpretable** (emergent x/y structure, distributed across dimensions), and **causal importance is not reducible to how much information a dimension encodes**. These are scoped empirical findings on a controlled benchmark, not universal architectural claims (see Limitations).
 
 ---
 
@@ -114,6 +122,17 @@ Synthetic NumPy environment: a filled disk (`radius ≈ 7`, ~15–20% of a 32×3
 Frames stored as `uint8`, normalized to `[0,1]` on load. Observations: `(N, T, 3, 32, 32)` · actions: `(N, T, action_dim)` · lengths: `(N,)`.
 
 Part 2 adds a vertical occlusion band (width configurable, e.g. w=17) and stores ground-truth `positions` for evaluation.
+
+## Limitations & scope
+
+These results are **scoped empirical findings on a controlled benchmark**, not universal architectural claims. Known limitations, and how they bound the conclusions:
+
+- **Modest data/compute budget.** Training uses ~500 episodes × 200 steps (~100k frames) for 50 epochs. A GRU's recurrent inductive bias converges fast in this regime, whereas a Transformer — which must learn temporal relations and positional structure from scratch — is data-hungrier and may be **under-trained** here. The Part 1 ranking should therefore be read as *"at this budget"*, not as an intrinsic architectural verdict. A fairer Transformer comparison would scale data and training substantially.
+- **Occlusion is short.** The ~2–4 frame gap tests short-term memory, which any RNN handles well. It does **not** probe the long-range regime where Transformers are expected to win. A genuine long-memory test would need occlusions of tens of frames, or a non-Markovian task (e.g. a key seen early that matters much later).
+- **Continuous Gaussian latent.** This follows PlaNet/DreamerV1. DreamerV2/V3 moved to **discrete (categorical) latents** to model multimodal futures. The continuous latent works here because the ball dynamics are smooth, deterministic, and unimodal; on stochastic or multimodal environments it would be a limiting choice.
+- **Transformer cost under the step-interface.** The unified `SequenceBackbone.step` recomputes attention over the accumulated context each step (O(T²), no KV cache), and the effective window is the training sequence length (25). This is fine for short sequences but is not an efficient long-context Transformer.
+
+Treating these as open limitations (rather than hiding them) is deliberate: the value of the study is the controlled methodology and the interpretability analysis, within a clearly stated scope.
 
 ## Project structure
 
